@@ -472,8 +472,18 @@ const syncPat = (p, act) => enq({
   }
 });
 
-const syncStaff = (s, act) => enq({
-  action: act, sheetName: 'Staff Details', data: {
+// changed = { photo, aadhar, pan, doc } booleans, telling us which file
+// fields the user actually re-picked in THIS session (see markChanged).
+// On a brand-new record we always send every file. On an EDIT we only
+// send a file field if it was changed here — otherwise we omit the key
+// entirely so the payload stays tiny (instant sync) and the backend
+// leaves the already-saved Drive file + its <field>Link hyperlink
+// exactly as they are, instead of re-uploading and creating a duplicate
+// Drive file every time you edit unrelated details.
+const syncStaff = (s, act, changed) => {
+  changed = changed || {};
+  const isNew = act === 'append';
+  const data = {
     ID: s.id,
     Name: s.name,
     Nickname: s.nickname || '',
@@ -483,22 +493,30 @@ const syncStaff = (s, act) => enq({
     PAN: s.pan || '',
     Rate: s.rate || '',
     StartDate: fmtDate(s.startDate || ''),
-    Date: todayStr(),
-    // Base64 data URLs — the Apps Script backend decodes these and
-    // embeds them directly into the sheet (e.g. via insertImage),
-    // no Google Drive connection needed.
-    Photo: s.photo || '',
-    // Send EVERY uploaded file as an array (not just the first one) so
-    // the backend saves each Aadhar/PAN file to Drive individually and
-    // links every single one in the AadharPhotoLink/PanPhotoLink columns.
-    AadharPhoto: (s.saadharPhotos || []).map(f => f.data),
-    AadharPhotoNames: (s.saadharPhotos || []).map(f => f.name).join(', '),
-    PanPhoto: (s.panPhotos || []).map(f => f.data),
-    PanPhotoNames: (s.panPhotos || []).map(f => f.name).join(', '),
-    AdditionalDocName: (s.additionalDoc && s.additionalDoc.name) || '',
-    AdditionalDoc: (s.additionalDoc && s.additionalDoc.data) || (typeof s.additionalDoc === 'string' ? s.additionalDoc : '')
+    Date: todayStr()
+  };
+  // Base64 data URL(s). The Apps Script backend decodes each one, saves
+  // it to Google Drive, writes "Yes"/"No" in the main column and a
+  // working "Open in Drive" link in the matching <field>Link column.
+  if (isNew || changed.photo) {
+    data.Photo = s.photo || '';
   }
-});
+  // Every Aadhar/PAN file is sent as an ARRAY so the backend saves each
+  // one to Drive individually and links every single one.
+  if (isNew || changed.aadhar) {
+    data.AadharPhoto = (s.saadharPhotos || []).map(f => f.data);
+    data.AadharPhotoNames = (s.saadharPhotos || []).map(f => f.name).join(', ');
+  }
+  if (isNew || changed.pan) {
+    data.PanPhoto = (s.panPhotos || []).map(f => f.data);
+    data.PanPhotoNames = (s.panPhotos || []).map(f => f.name).join(', ');
+  }
+  if (isNew || changed.doc) {
+    data.AdditionalDocName = (s.additionalDoc && s.additionalDoc.name) || '';
+    data.AdditionalDoc = (s.additionalDoc && s.additionalDoc.data) || (typeof s.additionalDoc === 'string' ? s.additionalDoc : '');
+  }
+  return enq({ action: act, sheetName: 'Staff Details', data });
+};
 
 const syncDel = (sheet, key, val) => enq({ action: 'delete', sheetName: sheet, data: { [key]: val } });
 
@@ -607,9 +625,24 @@ async function doPrint(bills) {
   // requestAnimationFrame guarantees at least one full paint has
   // happened (the first rAF fires before the next paint, the second
   // fires after it).
+  // Clear the print sheet only AFTER the print/save flow finishes. On
+  // mobile, window.print() returns immediately (it does NOT block like it
+  // does on desktop), so the old fixed setTimeout(1500) wiped the bill
+  // content before the user had even tapped "Save as PDF" — producing a
+  // blank PDF. 'afterprint' fires when the print/save dialog actually
+  // closes, on both desktop and mobile, so the content survives until then.
+  const clearSheet = () => {
+    sheet.innerHTML = '';
+    window.removeEventListener('afterprint', clearSheet);
+    clearTimeout(clearSheet._t);
+  };
+  window.addEventListener('afterprint', clearSheet);
+  // Safety net only — if some browser never fires 'afterprint', clear long
+  // after any realistic save could finish (2 min), never at 1.5s.
+  clearSheet._t = setTimeout(() => { if (sheet.innerHTML) clearSheet(); }, 120000);
+
   await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
   window.print();
-  setTimeout(() => { sheet.innerHTML = '' }, 1500);
 }
 
 /* ══════════════════════════════════════════════════════════
@@ -630,6 +663,137 @@ const I = {
   logout: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15M12 9l-3 3m0 0l3 3m-3-3h12.75"/></svg>`,
 };
 const ico = (k, cls = 'w-4 h-4') => `<span class="${cls}" style="display:inline-flex;align-items:center;justify-content:center">${I[k]}</span>`;
+
+/* ══════════════════════════════════════════════════════════
+   PULL FROM SERVER  — makes the app truly multi-device.
+   The app is offline-first and normally only PUSHES local changes up to
+   Google Sheets. On a brand-new device/browser the local database is
+   empty, which is exactly why a freshly-opened laptop showed "0 records".
+   pullFromServer() uses the backend 'list' action to read every sheet and
+   MERGES anything this device is missing into local storage. It only ADDS
+   records whose ID isn't already present locally, so it can never clobber
+   a local edit that hasn't synced up yet.
+   Note: photos/scans live in Google Drive, not in the sheet, so pulled
+   staff records carry the Drive links (…Link) but not the raw image bytes
+   — the text data and bills come down in full.
+══════════════════════════════════════════════════════════ */
+const PULL_FALLBACK_DATE_ = '2000-01-01T00:00:00.000Z';
+
+function parseDMY_(v) {
+  if (!v) return '';
+  const m = String(v).trim().match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})$/);
+  if (!m) return '';
+  let [, d, mo, y] = m;
+  if (y.length === 2) y = '20' + y;
+  const dt = new Date(Number(y), Number(mo) - 1, Number(d));
+  return isNaN(dt.getTime()) ? '' : dt.toISOString();
+}
+
+function mapPatientRow_(r) {
+  return {
+    id: String(r.ID || '').trim(),
+    name: r.Name || '',
+    address: r.Address || '',
+    mobile: r.Mobile || '',
+    photo: '',
+    createdAt: parseDMY_(r.Date) || PULL_FALLBACK_DATE_
+  };
+}
+
+function mapStaffRow_(r) {
+  return {
+    id: String(r.ID || '').trim(),
+    name: r.Name || '', nickname: r.Nickname || '', mobile: r.Mobile || '',
+    type: r.Type || '', aadhar: r.AADHAR || '', pan: r.PAN || '',
+    rate: r.Rate || '', startDate: r.StartDate || '',
+    photo: '', saadharPhotos: [], panPhotos: [], additionalDoc: '',
+    // Drive links so a pulled record can still open its files even though
+    // the raw image bytes aren't stored in the sheet.
+    photoLink: r.PhotoLink || '', aadharPhotoLink: r.AadharPhotoLink || '',
+    panPhotoLink: r.PanPhotoLink || '', additionalDocLink: r.AdditionalDocLink || '',
+    createdAt: parseDMY_(r.Date) || PULL_FALLBACK_DATE_
+  };
+}
+
+// A bill spans MULTIPLE sheet rows (one per line item, same ID). Group by
+// ID and rebuild the lines[] array; Total/Words only appear on the first
+// line of each bill.
+function mapBillRows_(rows, center) {
+  const byId = new Map();
+  (rows || []).forEach(r => {
+    const id = String(r.ID || '').trim();
+    if (!id) return;
+    if (!byId.has(id)) {
+      byId.set(id, {
+        id, center,
+        billNo: r.BillNo || '', date: r.Date || '', generatedDate: r.Date || '',
+        patientId: '', patientName: r.Patient || '',
+        staffId: '', staffName: r.Staff || '', staffType: r.StaffType || '',
+        lines: [], totalAmount: 0, amountInWords: '',
+        createdAt: parseDMY_(r.Date) || PULL_FALLBACK_DATE_
+      });
+    }
+    const b = byId.get(id);
+    b.lines.push({
+      no: r.SNo || '', duty: r.Duty || '', shift: r.Shift || '',
+      startDate: r.StartDate || '', endDate: r.EndDate || '',
+      days: r.Days || '', rate: r.Rate || '', amount: r.Amount || ''
+    });
+    if (!b.totalAmount && r.Total !== '' && r.Total != null) {
+      b.totalAmount = Number(String(r.Total).replace(/[^0-9.]/g, '')) || 0;
+    }
+    if (r.Words) b.amountInWords = r.Words;
+  });
+  return [...byId.values()];
+}
+
+async function mergeServer_(store, incoming, localList) {
+  const have = new Set(localList.map(x => String(x.id)));
+  let added = 0;
+  for (const rec of incoming) {
+    if (!rec.id || have.has(String(rec.id))) continue;
+    localList.push(rec);
+    have.add(String(rec.id));
+    try { await dbPut(store, rec); } catch (e) { console.warn('[pull] local save failed', e); }
+    added++;
+  }
+  return added;
+}
+
+let _pulling = false;
+async function pullFromServer(app) {
+  if (_pulling || !navigator.onLine) return;
+  _pulling = true;
+  try {
+    const [pat, stf, bM, bP] = await Promise.all([
+      _post({ action: 'list', sheetName: 'Patient Details', secret: GAS_SECRET }),
+      _post({ action: 'list', sheetName: 'Staff Details', secret: GAS_SECRET }),
+      _post({ action: 'list', sheetName: 'Manav Seva Kalyan Bill', secret: GAS_SECRET }),
+      _post({ action: 'list', sheetName: 'Patient Care Centre Bill', secret: GAS_SECRET })
+    ]);
+    const patients = (pat.rows || []).map(mapPatientRow_).filter(r => r.id);
+    const staff = (stf.rows || []).map(mapStaffRow_).filter(r => r.id);
+    const bills = [
+      ...mapBillRows_(bM.rows || [], 'MANAV_SEVA'),
+      ...mapBillRows_(bP.rows || [], 'PATIENT_CARE')
+    ];
+    let added = 0;
+    added += await mergeServer_('patients', patients, app.patients);
+    added += await mergeServer_('staff', staff, app.staff);
+    added += await mergeServer_('bills', bills, app.bills);
+    if (added) {
+      app.patients.sort(byDate); app.staff.sort(byDate); app.bills.sort(byDate);
+      IDX.patients.build(app.patients); IDX.staff.build(app.staff); IDX.bills.build(app.bills);
+      app.render();
+      toast('Loaded ' + added + ' record' + (added > 1 ? 's' : '') + ' from Google Sheets \u2713', 'success', 3000);
+    }
+  } catch (e) {
+    // Non-fatal: the app still works fully offline with whatever is local.
+    console.warn('[pullFromServer]', e && e.message ? e.message : e);
+  } finally {
+    _pulling = false;
+  }
+}
 
 /* ══════════════════════════════════════════════════════════
    APP CLASS
@@ -667,6 +831,10 @@ class App {
     await refreshPendingCount_();
     this.loading = false; this.render();
     setTimeout(drainQueue, 1500);
+    // Pull records added on OTHER devices down into this one so a freshly
+    // opened laptop/browser shows the full history instead of "0 records".
+    // Deferred so it never blocks first paint; only adds what's missing.
+    setTimeout(() => pullFromServer(this), 400);
   }
 
   // ONE-TIME CLEANUP: older versions of this app gave new staff/patients a
@@ -890,7 +1058,13 @@ class App {
       this.staff[i] = s; this.editingId = null;
       IDX.staff.remove(s.id); IDX.staff.add(s);
     } else { this.staff.unshift(s); IDX.staff.add(s) }
-    await this._save('staff', s); syncStaff(s, isEdit ? 'update' : 'append');
+    const changedFiles = {
+      photo: !!(fd._changed && fd._changed.sphoto),
+      aadhar: !!(fd._changed && fd._changed.saadharPhotos),
+      pan: !!(fd._changed && fd._changed.panPhotos),
+      doc: !!(fd._changed && fd._changed.sdoc)
+    };
+    await this._save('staff', s); syncStaff(s, isEdit ? 'update' : 'append', changedFiles);
     toast(isEdit ? 'Staff updated ✓' : 'Staff added ✓', 'success');
     this.showForm = false; this.formData = {}; this.render();
   }
@@ -930,10 +1104,18 @@ class App {
       viewDoc(f, s.name + ' — ' + (m[1] === 'aadhar' ? 'Aadhar Card' : 'PAN Card'));
     }
   }
+  // Records that the user actively re-picked/removed a file for this
+  // field during the CURRENT add/edit session. On an edit we only push a
+  // file field up to Google Sheets/Drive if it was changed here — an
+  // untouched photo is left exactly as-is in Drive (no re-upload, no
+  // duplicate file, instant save).
+  markChanged(key) {
+    (this.formData._changed = this.formData._changed || {})[key] = true;
+  }
   handleFile(e, key) {
     const f = e.target.files[0]; if (!f) return;
     if (f.size > 2097152) { toast('Image must be under 2 MB', 'error'); return }
-    const r = new FileReader(); r.onload = ev => { this.formData[key] = ev.target.result; this.render() }; r.readAsDataURL(f);
+    const r = new FileReader(); r.onload = ev => { this.formData[key] = ev.target.result; this.markChanged(key); this.render() }; r.readAsDataURL(f);
   }
   // Accepts images, PDFs, and Word docs. Stores {data, name, type} so non-image
   // files (PDF/DOC) can be identified and previewed/downloaded later.
@@ -943,6 +1125,7 @@ class App {
     const r = new FileReader();
     r.onload = ev => {
       this.formData[key] = { data: ev.target.result, name: f.name, type: f.type || '' };
+      this.markChanged(key);
       this.render();
     };
     r.readAsDataURL(f);
@@ -958,6 +1141,7 @@ class App {
       const r = new FileReader();
       r.onload = ev => {
         this.formData[key].push({ data: ev.target.result, name: f.name, type: f.type || '' });
+        this.markChanged(key);
         processed++;
         if (processed === files.length) this.render();
       };
@@ -1276,7 +1460,7 @@ ${list.map(p => `
         ${(fd.saadharPhotos || []).map((f, i) => {
         const m = FILE_KIND_META[fileKind(f)]; return `<div class="flex items-center gap-2 text-xs">
           <span style="background:${m.bg};color:${m.fg};padding:4px 8px;border-radius:8px;font-weight:700">${m.icon} ${m.label} · ${esc(f.name || 'File ' + (i + 1))}</span>
-          <button type="button" onclick="event.stopPropagation();APP.formData.saadharPhotos.splice(${i},1);APP.render()" style="border:none;background:none;color:#dc2626;cursor:pointer;font-weight:700">×</button>
+          <button type="button" onclick="event.stopPropagation();APP.formData.saadharPhotos.splice(${i},1);APP.markChanged('saadharPhotos');APP.render()" style="border:none;background:none;color:#dc2626;cursor:pointer;font-weight:700">×</button>
         </div>`;
       }).join('')}
       </div>` : ''}</div>
@@ -1286,7 +1470,7 @@ ${list.map(p => `
         ${(fd.panPhotos || []).map((f, i) => {
         const m = FILE_KIND_META[fileKind(f)]; return `<div class="flex items-center gap-2 text-xs">
           <span style="background:${m.bg};color:${m.fg};padding:4px 8px;border-radius:8px;font-weight:700">${m.icon} ${m.label} · ${esc(f.name || 'File ' + (i + 1))}</span>
-          <button type="button" onclick="event.stopPropagation();APP.formData.panPhotos.splice(${i},1);APP.render()" style="border:none;background:none;color:#dc2626;cursor:pointer;font-weight:700">×</button>
+          <button type="button" onclick="event.stopPropagation();APP.formData.panPhotos.splice(${i},1);APP.markChanged('panPhotos');APP.render()" style="border:none;background:none;color:#dc2626;cursor:pointer;font-weight:700">×</button>
         </div>`;
       }).join('')}
       </div>` : ''}</div>

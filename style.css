@@ -1327,3 +1327,307 @@ select:focus-visible {
 #print-sheet {
     display: none
 }
+
+/* ══════════════════════════════════════════════════════════════════
+   ✨ VISUAL UPGRADE — luminous jewel palette + orchestrated motion
+   Appended last so these rules win. All CONTINUOUS motion lives on
+   fixed, never-re-rendered layers (#login-screen, body::before) so it
+   stays glass-smooth; in-app elements use hover/transition richness and
+   static multi-stop gradients so nothing "restarts" on re-render.
+══════════════════════════════════════════════════════════════════ */
+:root {
+    --grad-aurora: linear-gradient(120deg, #4c1d95 0%, #6d28d9 26%, #7c3aed 46%, #4f46e5 64%, #0d9488 100%);
+    --grad-royal: linear-gradient(120deg, #4f46e5 0%, #7c3aed 44%, #9333ea 66%, #0d9488 118%);
+    --grad-jewel: linear-gradient(90deg, #7c3aed, #4f46e5, #06b6d4, #0d9488, #db2777, #7c3aed);
+    --glow-violet: 0 14px 34px rgba(124, 58, 237, .34);
+    --glow-teal: 0 14px 34px rgba(13, 148, 136, .3);
+}
+
+/* ---------- app-wide living aurora backdrop (fixed, smooth forever) ---------- */
+body::before {
+    content: '';
+    position: fixed;
+    inset: -45%;
+    z-index: 0;
+    pointer-events: none;
+    background:
+        radial-gradient(closest-side at 30% 34%, rgba(124, 58, 237, .20), transparent),
+        radial-gradient(closest-side at 72% 28%, rgba(6, 182, 212, .16), transparent),
+        radial-gradient(closest-side at 68% 76%, rgba(13, 148, 136, .18), transparent),
+        radial-gradient(closest-side at 26% 74%, rgba(219, 39, 119, .13), transparent);
+    animation: auroraSpin 44s linear infinite;
+    will-change: transform;
+}
+
+@keyframes auroraSpin {
+    to {
+        transform: rotate(360deg) scale(1.06)
+    }
+}
+
+/* keep app content above the aurora */
+#app {
+    position: relative;
+    z-index: 1
+}
+
+/* ══════════════ LOGIN — the signature moment ══════════════ */
+#login-screen {
+    background:
+        radial-gradient(62% 82% at 50% -12%, rgba(219, 39, 119, .38), transparent 62%),
+        linear-gradient(125deg, #3b0764 0%, #6d28d9 30%, #7c3aed 48%, #4f46e5 66%, #0d9488 100%);
+    background-size: 100% 100%, 240% 240%;
+    animation: loginGradient 16s ease infinite;
+}
+
+/* slow conic halo glowing behind the card */
+#login-screen::before {
+    content: '';
+    position: absolute;
+    width: 560px;
+    height: 560px;
+    left: 50%;
+    top: 50%;
+    margin: -280px 0 0 -280px;
+    border-radius: 50%;
+    background: conic-gradient(from 0deg, rgba(124, 58, 237, 0), rgba(6, 182, 212, .38), rgba(219, 39, 119, .32), rgba(124, 58, 237, 0));
+    filter: blur(52px);
+    animation: haloSpin 20s linear infinite;
+    pointer-events: none;
+    z-index: 0;
+}
+
+@keyframes haloSpin {
+    to {
+        transform: rotate(360deg)
+    }
+}
+
+/* glowing, tinted floating orbs */
+.login-bg-shape {
+    background: radial-gradient(circle at 32% 30%, rgba(255, 255, 255, .28), rgba(255, 255, 255, .05) 62%, transparent);
+    box-shadow: 0 0 70px rgba(255, 255, 255, .14);
+    filter: blur(1px)
+}
+
+.login-bg-shape.s1 {
+    background: radial-gradient(circle at 32% 30%, rgba(167, 139, 250, .5), transparent 66%)
+}
+
+.login-bg-shape.s2 {
+    background: radial-gradient(circle at 32% 30%, rgba(45, 212, 191, .42), transparent 66%)
+}
+
+.login-bg-shape.s3 {
+    background: radial-gradient(circle at 32% 30%, rgba(244, 114, 182, .42), transparent 66%)
+}
+
+/* the card sits above the halo/orbs */
+#login-box {
+    z-index: 1
+}
+
+/* animated jewel gradient top-bar */
+#login-box::before {
+    height: 5px;
+    background: var(--grad-jewel);
+    background-size: 300% 100%;
+    animation: barFlow 6s linear infinite
+}
+
+@keyframes barFlow {
+    to {
+        background-position: 300% 0
+    }
+}
+
+/* shimmering gradient wordmark + gentle entrance */
+#login-box h1 {
+    background: linear-gradient(100deg, #6d28d9, #7c3aed 28%, #db2777 50%, #7c3aed 72%, #0d9488);
+    background-size: 220% auto;
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    animation: fadeUp .55s .14s both, titleShimmer 7s linear 1s infinite
+}
+
+@keyframes titleShimmer {
+    to {
+        background-position: 220% center
+    }
+}
+
+/* floating clinic icon (pulse ring on ::after stays as-is) */
+#login-icon {
+    animation: fadeUp .55s .04s both, iconFloat 4.6s ease-in-out 1.1s infinite
+}
+
+@keyframes iconFloat {
+
+    0%,
+    100% {
+        transform: translateY(0)
+    }
+
+    50% {
+        transform: translateY(-7px)
+    }
+}
+
+/* staggered reveal of the rest */
+@keyframes fadeUp {
+    from {
+        opacity: 0;
+        transform: translateY(14px)
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0)
+    }
+}
+
+.login-sub {
+    animation: fadeUp .55s .20s both
+}
+
+.login-hint {
+    animation: fadeUp .55s .28s both
+}
+
+#g-signin {
+    animation: fadeUp .55s .38s both
+}
+
+.login-footer {
+    animation: fadeUp .55s .48s both
+}
+
+/* frame the Google button so it reads as the primary action */
+#g-signin {
+    padding: 6px;
+    border-radius: 16px;
+    background: linear-gradient(180deg, rgba(124, 58, 237, .06), rgba(13, 148, 136, .06));
+    box-shadow: inset 0 0 0 1px rgba(124, 58, 237, .12)
+}
+
+/* ══════════════ DASHBOARD — magnificent, but disciplined ══════════════ */
+/* richer header (static gradient => no re-render flicker) */
+.app-header {
+    background: var(--grad-aurora);
+    box-shadow: 0 6px 26px rgba(76, 29, 149, .3);
+    position: sticky
+}
+
+.app-logo {
+    background: rgba(255, 255, 255, .2);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .3), 0 4px 14px rgba(0, 0, 0, .12)
+}
+
+/* list cards: lift + colored halo + diagonal sheen sweep on hover */
+.card {
+    position: relative;
+    isolation: isolate
+}
+
+.card::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    pointer-events: none;
+    background: linear-gradient(115deg, transparent 30%, rgba(255, 255, 255, .55) 50%, transparent 70%);
+    transform: translateX(-120%);
+    opacity: 0;
+    transition: transform .6s ease, opacity .3s
+}
+
+.card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 18px 40px rgba(79, 70, 229, .18), 0 6px 14px rgba(15, 23, 42, .1)
+}
+
+.card:hover::after {
+    transform: translateX(120%);
+    opacity: 1
+}
+
+/* floating add button: vivid gradient + glow */
+.fbtn-add {
+    background: linear-gradient(135deg, #7c3aed, #4f46e5 55%, #0d9488) !important;
+    box-shadow: var(--glow-violet)
+}
+
+.fbtn-add:hover {
+    box-shadow: 0 18px 42px rgba(124, 58, 237, .5);
+    transform: translateY(-2px) scale(1.02)
+}
+
+/* primary/green action buttons get gradients + glow */
+.fbtn-primary {
+    background: linear-gradient(135deg, #7c3aed, #4f46e5) !important;
+    box-shadow: var(--glow-violet)
+}
+
+.fbtn-primary:hover {
+    box-shadow: 0 16px 38px rgba(124, 58, 237, .46)
+}
+
+.fbtn-green {
+    background: linear-gradient(135deg, #10b981, #0d9488) !important;
+    box-shadow: var(--glow-teal)
+}
+
+.fbtn-green:hover {
+    box-shadow: 0 16px 38px rgba(13, 148, 136, .44)
+}
+
+/* active nav pills glow; inactive ones lift crisply */
+.nav-btn.active {
+    box-shadow: 0 8px 22px rgba(124, 58, 237, .38) !important
+}
+
+.nav-btn:hover:not(.active) {
+    box-shadow: 0 8px 20px rgba(79, 70, 229, .16)
+}
+
+.mnav-btn.active {
+    filter: drop-shadow(0 4px 10px rgba(124, 58, 237, .5))
+}
+
+/* the sync-status dot gets a soft glow so its state reads at a glance */
+.sdot.ok {
+    box-shadow: 0 0 0 3px rgba(16, 185, 129, .18)
+}
+
+.sdot.err {
+    box-shadow: 0 0 0 3px rgba(239, 68, 68, .18)
+}
+
+.sdot.ing {
+    box-shadow: 0 0 0 3px rgba(245, 158, 11, .2)
+}
+
+/* ---------- accessibility: honor reduced-motion ---------- */
+@media (prefers-reduced-motion: reduce) {
+
+    body::before,
+    #login-screen,
+    #login-screen::before,
+    #login-box::before,
+    #login-box h1,
+    #login-icon,
+    .login-bg-shape,
+    .login-sub,
+    .login-hint,
+    #g-signin,
+    .login-footer,
+    .card::after {
+        animation: none !important;
+        transition: none !important
+    }
+
+    #login-box h1 {
+        background-position: 0 center
+    }
+}

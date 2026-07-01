@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+    <meta name="theme-color" content="#7c3aed">
+    <meta name="mobile-web-app-capable" content="yes">
+    <link rel="icon" href="images.jpeg" type="image/jpeg">
+    <meta name="description" content="Billing System">
+    <title>Billing System</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+    <div id="offline-banner">⚡ You are offline — data saved locally, will sync when reconnected.</div>
+
+    <div id="login-screen">
+        <div class="login-bg-shape s1"></div>
+        <div class="login-bg-shape s2"></div>
+        <div class="login-bg-shape s3"></div>
+        <div id="login-box">
+            <div id="login-icon">🏥</div>
+            <h1>Billing System</h1>
+            <p class="login-sub">Manav Seva Kalyan &amp; Patient Care Centre</p>
+            <!-- <p class="login-hint">Authorized account: manavseva9920@gmail.com</p> -->
+            <div class="linp-wrap">
+                <span class="linp-ico">👤</span>
+                <input class="linp" type="text" id="l-user" placeholder="Username" autocomplete="username"
+                    onkeydown="if(event.key==='Enter')document.getElementById('l-pass').focus()">
+            </div>
+            <div class="linp-wrap">
+                <span class="linp-ico">🔒</span>
+                <input class="linp" type="password" id="l-pass" placeholder="Password" autocomplete="current-password"
+                    onkeydown="if(event.key==='Enter')doLogin()">
+            </div>
+            <button class="l-btn" onclick="doLogin()">Login →</button>
+            <p class="l-err" id="l-err">Invalid username or password.</p>
+            <!-- <p class="login-footer">🔒 Secure access · Authorized personnel only</p> -->
+        </div>
+    </div>
+
+    <div id="app" style="display:none"></div>
+    <div id="print-sheet"></div>
+    <div id="toast-wrap"></div>
+    <div id="dlg-overlay" style="display:none"></div>
+    <!-- https://script.google.com/macros/s/AKfycbw8AziKJ38IJebYHB0KLsL-t3jTjT1P78mpMJtCoig1_Gn4R3gUIVDfK-DRf2BXYeQh/exec      -->
+    <script src="app.js"></script>
+</body>
+
+</html>
+<!-- #in this, update the spreadsheet ,in patient section, remove the photo and photo link, and in the staff section, in the photo, aadhar, pan, row which is empty, fill it with enum, it should yes or no, if the staff has photo then it should be yes, provided the screenshot above, ##after deploying, when i use this on mobile, then the record get added easily and synced to the spreadsheet easily, but in the laptop when i open the frontend it shows it has 0 records, and also in mobile when i print the bill and save as the pdf, then the pdf which got saved shows blank page -->

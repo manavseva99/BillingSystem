@@ -188,6 +188,18 @@ function nextSeqId(records) {
   (records || []).forEach(r => { const n = parseInt(String(r.id).replace(/\D/g, ''), 10); if (Number.isFinite(n) && n > max) max = n; });
   return max + 1;
 }
+// Globally-unique record id. Sequential per-device numbering (nextSeqId)
+// meant two devices both minted "1", "2", "3"… so a record made on the
+// phone and a different one made on the laptop shared an id — and sync
+// then skipped whichever one the device thought it "already had". A random
+// id can't collide across devices, which is what actually lets records
+// flow both ways. Compact + string.
+function newRecordId() {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    return crypto.randomUUID().replace(/-/g, '').slice(0, 12);
+  }
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+}
 // Identify a file's kind from its MIME type / filename for display badges.
 function fileKind(f) {
   if (!f) return 'file';
@@ -452,12 +464,22 @@ async function drainQueue() {
     let ok = false;
     for (let attempt = 1; attempt <= 3 && !ok; attempt++) {
       try { await _post(item); ok = true }
-      catch (e) { if (attempt < 3) await new Promise(r => setTimeout(r, 800 * attempt)); else { console.warn('[GAS]', e.message); anyFailed = true } }
+      catch (e) { if (attempt < 3) await new Promise(r => setTimeout(r, 800 * attempt)); else console.warn('[GAS]', e.message) }
     }
-    // Remove this item the instant it succeeds — we no longer rewrite
-    // the whole queue as one blob, so a single huge item can't block or
-    // corrupt the rest of the queue, and storage shrinks immediately.
-    if (ok) { try { await qDelete(item.qid) } catch (e) { console.warn('Queue cleanup failed', e) } }
+    if (ok) {
+      // Remove the instant it succeeds — one huge item can't block the rest.
+      try { await qDelete(item.qid) } catch (e) { console.warn('Queue cleanup failed', e) }
+    } else if (item.action === 'delete') {
+      // A delete that keeps failing almost always means the row is already
+      // gone from the sheet (deleted from another device / earlier). The end
+      // state is identical, so drop it instead of retrying it forever — this
+      // is what clears a stuck "Sync failed / N pending".
+      try { await qDelete(item.qid) } catch (e) { }
+      console.warn('[GAS] dropped un-syncable delete for', item.sheetName, (item.data || {}).ID);
+    } else {
+      // Keep appends/updates queued on failure so no data is ever lost.
+      anyFailed = true;
+    }
   }
   await refreshPendingCount_();
   _draining = false;
@@ -776,17 +798,26 @@ async function pullFromServer(app) {
   if (_pulling || !navigator.onLine) return;
   _pulling = true;
   try {
-    const [pat, stf, bM, bP] = await Promise.all([
+    // Fetch each sheet independently — if one list call fails, the others
+    // still come through (Promise.all used to abort the ENTIRE pull on any
+    // single failure, so one bad sheet meant zero records synced).
+    const settled = await Promise.allSettled([
       _post({ action: 'list', sheetName: 'Patient Details', secret: GAS_SECRET }),
       _post({ action: 'list', sheetName: 'Staff Details', secret: GAS_SECRET }),
       _post({ action: 'list', sheetName: 'Manav Seva Kalyan Bill', secret: GAS_SECRET }),
       _post({ action: 'list', sheetName: 'Patient Care Centre Bill', secret: GAS_SECRET })
     ]);
-    const patients = (pat.rows || []).map(mapPatientRow_).filter(r => r.id);
-    const staff = (stf.rows || []).map(mapStaffRow_).filter(r => r.id);
+    const rowsOf = i => {
+      const r = settled[i];
+      if (r.status === 'fulfilled') return (r.value && r.value.rows) || [];
+      console.warn('[pullFromServer] list failed:', r.reason && r.reason.message ? r.reason.message : r.reason);
+      return [];
+    };
+    const patients = rowsOf(0).map(mapPatientRow_).filter(r => r.id);
+    const staff = rowsOf(1).map(mapStaffRow_).filter(r => r.id);
     const bills = [
-      ...mapBillRows_(bM.rows || [], 'MANAV_SEVA'),
-      ...mapBillRows_(bP.rows || [], 'PATIENT_CARE')
+      ...mapBillRows_(rowsOf(2), 'MANAV_SEVA'),
+      ...mapBillRows_(rowsOf(3), 'PATIENT_CARE')
     ];
     let added = 0;
     added += await mergeServer_('patients', patients, app.patients);
@@ -1022,7 +1053,7 @@ class App {
     const isEdit = !!this.editingId;
     const orig = isEdit ? this.patients.find(x => x.id === this.editingId) : null;
     const p = {
-      id: this.editingId || String(nextSeqId(this.patients)),
+      id: this.editingId || newRecordId(),
       name: nm, address: (fd.paddress || '').trim(), mobile: mb,
       photo: fd.pphoto || (orig ? orig.photo || '' : ''),
       createdAt: orig ? orig.createdAt : new Date().toISOString()
@@ -1067,7 +1098,7 @@ class App {
     const isEdit = !!this.editingId;
     const orig = isEdit ? this.staff.find(x => x.id === this.editingId) : null;
     const s = {
-      id: this.editingId || String(nextSeqId(this.staff)), name: nm, nickname: nk, mobile: mb, type: fd.stype,
+      id: this.editingId || newRecordId(), name: nm, nickname: nk, mobile: mb, type: fd.stype,
       aadhar: aa, pan,
       rate: fd.srate ? Number(fd.srate) : (orig ? orig.rate || '' : ''),
       startDate: fd.sstartDate || (orig ? orig.startDate || '' : ''),
@@ -1208,7 +1239,7 @@ class App {
     const sta = this.staff.find(s => s.id === fd.bstaff);
     const pfx = fd.bcenter === 'MANAV_SEVA' ? 'MSK' : 'PCC';
     const b = {
-      id: String(nextSeqId(this.bills)), center: fd.bcenter,
+      id: newRecordId(), center: fd.bcenter,
       billNo: nextBillNo(pfx, this.bills), date: todayStr(), generatedDate: todayStr(),
       patientId: fd.bpatient, patientName: pat ? pat.name : '', patientAddress: pat ? pat.address || '' : '',
       staffId: fd.bstaff, staffName: sta ? sta.name : '', staffType: sta ? sta.type : '',
@@ -1372,7 +1403,7 @@ class App {
       return `
 <button onclick="APP.showForm=false;APP.editingId=null;APP.formData={};APP.render()" class="fbtn fbtn-cancel mb-4 text-sm">${ico('back')} Back</button>
 <div class="bg-white rounded-2xl shadow-sm border border-gray-100 p-5 w-full max-w-lg mx-auto">
-  <h3 class="font-bold text-base mb-4 flex items-center gap-2">${this.editingId ? 'Edit' : 'Add'} Patient / Party ${this.editingId ? `<span class="text-xs font-semibold px-2 py-0.5 rounded" style="background:#f1f5f9;color:#94a3b8">ID #${esc(this.editingId)}</span>` : `<span class="text-xs font-semibold px-2 py-0.5 rounded" style="background:#dbeafe;color:#1d4ed8">Will be ID #${nextSeqId(this.patients)}</span>`}</h3>
+  <h3 class="font-bold text-base mb-4 flex items-center gap-2">${this.editingId ? 'Edit' : 'Add'} Patient / Party ${this.editingId ? `<span class="text-xs font-semibold px-2 py-0.5 rounded" style="background:#f1f5f9;color:#94a3b8">ID #${esc(this.editingId)}</span>` : `<span class="text-xs font-semibold px-2 py-0.5 rounded" style="background:#dbeafe;color:#1d4ed8">New</span>`}</h3>
   <div class="grid gap-4 mb-4">
     <div><label class="flbl">Patient / Party Name *</label><input class="finp" placeholder="Full name" value="${esc(fd.pname || '')}" oninput="APP.formData.pname=this.value"></div>
     <div><label class="flbl">Address</label><input class="finp" placeholder="Address (optional)" value="${esc(fd.paddress || '')}" oninput="APP.formData.paddress=this.value"></div>
@@ -1463,7 +1494,7 @@ ${list.map(p => `
       return `
 <button onclick="APP.showForm=false;APP.editingId=null;APP.formData={};APP.render()" class="fbtn fbtn-cancel mb-4 text-sm">${ico('back')} Back</button>
 <div class="bg-white rounded-2xl shadow-sm border border-gray-100 p-5">
-  <h3 class="font-bold text-base mb-4 flex items-center gap-2">${this.editingId ? 'Edit' : 'Add'} Staff Member ${this.editingId ? `<span class="text-xs font-semibold px-2 py-0.5 rounded" style="background:#f1f5f9;color:#94a3b8">ID #${esc(this.editingId)}</span>` : `<span class="text-xs font-semibold px-2 py-0.5 rounded" style="background:#dcfce7;color:#15803d">Will be ID #${nextSeqId(this.staff)}</span>`}</h3>
+  <h3 class="font-bold text-base mb-4 flex items-center gap-2">${this.editingId ? 'Edit' : 'Add'} Staff Member ${this.editingId ? `<span class="text-xs font-semibold px-2 py-0.5 rounded" style="background:#f1f5f9;color:#94a3b8">ID #${esc(this.editingId)}</span>` : `<span class="text-xs font-semibold px-2 py-0.5 rounded" style="background:#dcfce7;color:#15803d">New</span>`}</h3>
   <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
     <div><label class="flbl">Full Name *</label><input class="finp" placeholder="Full name" value="${esc(fd.sname || '')}" oninput="APP.formData.sname=this.value"></div>
     <div><label class="flbl">Nickname / Short Name</label><input class="finp" placeholder="Optional" value="${esc(fd.snickname || '')}" oninput="APP.formData.snickname=this.value"></div>

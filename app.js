@@ -212,6 +212,17 @@ function fileChip(f, onclick, name) {
     <span>${meta.icon}</span><span style="font-weight:800;font-size:.65rem;letter-spacing:.03em">${meta.label}</span><span style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${label}</span>
   </button>`;
 }
+
+// Renders one or more "Open in Drive" buttons for a record pulled from
+// another device — where the raw file bytes aren't local but the Google
+// Drive link(s) are. Accepts a single URL or several joined by commas.
+// Returns '' when there's no usable https link.
+function driveLinkBtns(raw, label) {
+  if (!raw) return '';
+  const urls = String(raw).split(/\s*,\s*/).map(u => u.trim()).filter(u => /^https?:\/\//.test(u));
+  if (!urls.length) return '';
+  return urls.map((u, i) => `<a href="${esc(u)}" target="_blank" rel="noopener" class="fbtn text-xs" style="background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe;text-decoration:none;gap:5px;display:inline-flex;align-items:center;margin:2px 4px 2px 0">🔗 ${esc(label)}${urls.length > 1 ? ' ' + (i + 1) : ''} — Open in Drive</a>`).join('');
+}
 let _rfPending = false;
 const schedRender = () => { if (_rfPending) return; _rfPending = true; requestAnimationFrame(() => { _rfPending = false; APP && APP.render() }) };
 
@@ -781,7 +792,20 @@ async function pullFromServer(app) {
     added += await mergeServer_('patients', patients, app.patients);
     added += await mergeServer_('staff', staff, app.staff);
     added += await mergeServer_('bills', bills, app.bills);
-    if (added) {
+    // Backfill Drive links onto staff records we already had locally (e.g.
+    // pulled earlier, before the backend returned real URLs). Only fills
+    // link fields — never touches locally-uploaded file bytes.
+    let linkUpdates = 0;
+    for (const inc of staff) {
+      const loc = app.staff.find(x => String(x.id) === String(inc.id));
+      if (!loc) continue;
+      let changed = false;
+      ['photoLink', 'aadharPhotoLink', 'panPhotoLink', 'additionalDocLink'].forEach(k => {
+        if (inc[k] && loc[k] !== inc[k]) { loc[k] = inc[k]; changed = true; }
+      });
+      if (changed) { linkUpdates++; try { await dbPut('staff', loc); } catch (e) { } }
+    }
+    if (added || linkUpdates) {
       app.patients.sort(byDate); app.staff.sort(byDate); app.bills.sort(byDate);
       IDX.patients.build(app.patients); IDX.staff.build(app.staff); IDX.bills.build(app.bills);
       app.render();
@@ -1392,7 +1416,11 @@ ${list.map(p => `
 <div class="bg-white rounded-2xl shadow-sm border border-gray-100 p-5 w-full max-w-lg mx-auto">
   <div class="flex items-start justify-between mb-4">
     <div class="flex items-center gap-3">
-      ${s.photo ? `<img src="${s.photo}" class="w-14 h-14 rounded-full object-cover flex-shrink-0 border-2 border-green-200">` : `<div class="w-14 h-14 rounded-full bg-green-50 flex items-center justify-center flex-shrink-0 text-2xl">👤</div>`}
+      ${s.photo
+          ? `<img src="${s.photo}" class="w-14 h-14 rounded-full object-cover flex-shrink-0 border-2 border-green-200">`
+          : (s.photoLink
+            ? `<a href="${esc(String(s.photoLink).split(/\s*,\s*/)[0])}" target="_blank" rel="noopener" title="Open photo in Google Drive" class="w-14 h-14 rounded-full bg-green-50 flex items-center justify-center flex-shrink-0 text-2xl border-2 border-green-200" style="text-decoration:none">👤</a>`
+            : `<div class="w-14 h-14 rounded-full bg-green-50 flex items-center justify-center flex-shrink-0 text-2xl">👤</div>`)}
       <div>
         <h2 class="font-black text-lg">${esc(s.name)}${s.nickname ? ` <span class="text-sm font-normal text-gray-400">"${esc(s.nickname)}"</span>` : ''}</h2>
         <div class="flex items-center gap-1.5 mt-1 flex-wrap">
@@ -1418,16 +1446,16 @@ ${list.map(p => `
     <div class="flex gap-2 flex-wrap">
       ${s.saadharPhotos.map((f, i) => fileChip(f, `APP.openDoc('${s.id}','aadhar${i}')`, f.name)).join('')}
     </div>
-  </div>` : `<div class="mt-3"><p class="text-xs font-bold text-gray-400 mb-1">AADHAR CARD</p><p class="text-xs text-gray-300">No file uploaded</p></div>`}
+  </div>` : `<div class="mt-3"><p class="text-xs font-bold text-gray-400 mb-1">AADHAR CARD</p>${driveLinkBtns(s.aadharPhotoLink, 'Aadhar') || '<p class="text-xs text-gray-300">No file uploaded</p>'}</div>`}
   ${s.panPhotos && s.panPhotos.length ? `<div class="mt-3">
     <p class="text-xs font-bold text-gray-400 mb-2">PAN CARD (${s.panPhotos.length} file${s.panPhotos.length > 1 ? 's' : ''})</p>
     <div class="flex gap-2 flex-wrap">
       ${s.panPhotos.map((f, i) => fileChip(f, `APP.openDoc('${s.id}','pan${i}')`, f.name)).join('')}
     </div>
-  </div>` : `<div class="mt-3"><p class="text-xs font-bold text-gray-400 mb-1">PAN CARD</p><p class="text-xs text-gray-300">No file uploaded</p></div>`}
-  ${s.additionalDoc ? `<div class="mt-3">
+  </div>` : `<div class="mt-3"><p class="text-xs font-bold text-gray-400 mb-1">PAN CARD</p>${driveLinkBtns(s.panPhotoLink, 'PAN') || '<p class="text-xs text-gray-300">No file uploaded</p>'}</div>`}
+  ${(s.additionalDoc || s.additionalDocLink) ? `<div class="mt-3">
     <p class="text-xs font-bold text-gray-400 mb-1">ADDITIONAL DOCUMENT</p>
-    ${fileChip(s.additionalDoc, `APP.openDoc('${s.id}')`, s.additionalDoc.name)}
+    ${s.additionalDoc ? fileChip(s.additionalDoc, `APP.openDoc('${s.id}')`, s.additionalDoc.name) : driveLinkBtns(s.additionalDocLink, 'Document')}
   </div>` : ''}
 </div>`;
     }

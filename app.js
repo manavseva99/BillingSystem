@@ -651,29 +651,15 @@ async function doPrint(bills) {
 
   const sheet = document.getElementById('print-sheet');
   sheet.innerHTML = pages.map(p => `<div class="p-page">${p.join('')}</div>`).join('');
-  // Wait for the browser to actually paint the newly-injected content
-  // before printing. Without this, mobile browsers' "Save as PDF" can
-  // snapshot the page before layout/paint has caught up with the
-  // innerHTML change above, producing a blank page. Double
-  // requestAnimationFrame guarantees at least one full paint has
-  // happened (the first rAF fires before the next paint, the second
-  // fires after it).
-  // Clear the print sheet only AFTER the print/save flow finishes. On
-  // mobile, window.print() returns immediately (it does NOT block like it
-  // does on desktop), so the old fixed setTimeout(1500) wiped the bill
-  // content before the user had even tapped "Save as PDF" — producing a
-  // blank PDF. 'afterprint' fires when the print/save dialog actually
-  // closes, on both desktop and mobile, so the content survives until then.
-  const clearSheet = () => {
-    sheet.innerHTML = '';
-    window.removeEventListener('afterprint', clearSheet);
-    clearTimeout(clearSheet._t);
-  };
-  window.addEventListener('afterprint', clearSheet);
-  // Safety net only — if some browser never fires 'afterprint', clear long
-  // after any realistic save could finish (2 min), never at 1.5s.
-  clearSheet._t = setTimeout(() => { if (sheet.innerHTML) clearSheet(); }, 120000);
-
+  // IMPORTANT: do NOT clear the print sheet on a timer or on 'afterprint'.
+  // On mobile, window.print() returns immediately and the "Save as PDF"
+  // step happens asynchronously afterwards — clearing the content (which is
+  // what 'afterprint' / a timeout did) wiped the bill before it was
+  // captured, producing blank pages. The sheet is display:none normally and
+  // is simply overwritten on the next print, so leaving the content in place
+  // is harmless and guarantees it's present while the PDF is generated.
+  // Double requestAnimationFrame waits for a full paint before printing so
+  // the freshly-injected content is laid out first.
   await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
   window.print();
 }
@@ -1860,7 +1846,15 @@ ${list.map(s => `
 ══════════════════════════════════════════════════════════ */
 let APP;
 function initApp() { APP = window.APP = new App(); }
-document.addEventListener('visibilitychange', () => { if (!document.hidden && navigator.onLine) drainQueue() });
+// Pull other devices' new records down promptly — not only on a full page
+// reload. autoPull skips while a form is open so it can't disrupt data entry,
+// and pullFromServer is a no-op when nothing changed.
+const autoPull = () => { if (APP && !APP.showForm && navigator.onLine) pullFromServer(APP); };
+document.addEventListener('visibilitychange', () => { if (!document.hidden && navigator.onLine) { drainQueue(); autoPull(); } });
+window.addEventListener('focus', () => { if (navigator.onLine) autoPull(); });
+// Light background poll (~20s) so records added on another device appear
+// without a manual refresh.
+setInterval(() => { if (!document.hidden) autoPull(); }, 20000);
 // Check auth on load
 if (checkAuth()) initApp();
 if (navigator.onLine) drainQueue();

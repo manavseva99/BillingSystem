@@ -1196,8 +1196,8 @@ class App {
       id: this.editingId || String(nextSeqId(this.worker)),
       staffName,
       dutyDate: fd.wdutydate || '',
-      staffMobile: (fd.wstaffmobile || '').trim(),
-      partyMobile: (fd.wpartymobile || '').trim(),
+      staffMobile: (fd.wstaffmobile || '').replace(/[^0-9]/g, '').slice(0, 10),
+      partyMobile: (fd.wpartymobile || '').replace(/[^0-9]/g, '').slice(0, 10),
       partyAddress: (fd.wpartyaddress || '').trim(),
       createdAt: orig ? orig.createdAt : new Date().toISOString()
     };
@@ -1559,8 +1559,8 @@ class App {
   <div class="grid gap-4 mb-4">
     <div><label class="flbl">Staff Name</label><input class="finp" placeholder="Staff name" value="${esc(fd.wstaffname || '')}" oninput="APP.formData.wstaffname=this.value"></div>
     <div><label class="flbl">Duty Date</label><input class="finp" type="date" value="${esc(fd.wdutydate || '')}" oninput="APP.formData.wdutydate=this.value"></div>
-    <div><label class="flbl">Staff Mobile No.</label><input class="finp" type="tel" inputmode="numeric" placeholder="Staff number" value="${esc(fd.wstaffmobile || '')}" oninput="APP.formData.wstaffmobile=this.value.replace(/[^0-9+]/g,'')"></div>
-    <div><label class="flbl">Party Mobile No.</label><input class="finp" type="tel" inputmode="numeric" placeholder="Party number" value="${esc(fd.wpartymobile || '')}" oninput="APP.formData.wpartymobile=this.value.replace(/[^0-9+]/g,'')"></div>
+    <div><label class="flbl">Staff Mobile No.</label><input class="finp" type="tel" inputmode="numeric" maxlength="10" placeholder="10-digit staff number" value="${esc(fd.wstaffmobile || '')}" oninput="this.value=this.value.replace(/[^0-9]/g,'').slice(0,10);APP.formData.wstaffmobile=this.value"></div>
+    <div><label class="flbl">Party Mobile No.</label><input class="finp" type="tel" inputmode="numeric" maxlength="10" placeholder="10-digit party number" value="${esc(fd.wpartymobile || '')}" oninput="this.value=this.value.replace(/[^0-9]/g,'').slice(0,10);APP.formData.wpartymobile=this.value"></div>
     <div><label class="flbl">Party Address</label><textarea class="finp" rows="2" placeholder="Party address" oninput="APP.formData.wpartyaddress=this.value">${esc(fd.wpartyaddress || '')}</textarea></div>
   </div>
   <div class="flex gap-3">

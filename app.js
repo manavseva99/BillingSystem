@@ -73,7 +73,7 @@ document.body.classList.toggle('offline', !navigator.onLine); // initial banner 
 /* ══════════════════════════════════════════════════════════
    IndexedDB
 ══════════════════════════════════════════════════════════ */
-const DB_NAME = 'HospitalBMS3', DB_VER = 3;
+const DB_NAME = 'HospitalBMS3', DB_VER = 4;
 let _db = null;
 let _dbPromise = null;
 function openDB() {
@@ -85,7 +85,8 @@ function openDB() {
       [{ name: 'patients', indexes: ['createdAt', 'name', 'mobile'] },
       { name: 'staff', indexes: ['createdAt', 'name', 'type'] },
       { name: 'bills', indexes: ['createdAt', 'center', 'patientName', 'billNo'] },
-      { name: 'online', indexes: ['createdAt', 'company', 'date'] }
+      { name: 'online', indexes: ['createdAt', 'company', 'date'] },
+      { name: 'worker', indexes: ['createdAt', 'staffName', 'dutyDate'] }
       ].forEach(({ name, indexes }) => {
         if (!d.objectStoreNames.contains(name)) {
           const s = d.createObjectStore(name, { keyPath: 'id' });
@@ -186,7 +187,14 @@ function nextBillNo(pfx, bills) {
 // always starts at 1 and increments — independent of deletions/timestamps.
 function nextSeqId(records) {
   let max = 0;
-  (records || []).forEach(r => { const n = parseInt(String(r.id).replace(/\D/g, ''), 10); if (Number.isFinite(n) && n > max) max = n; });
+  (records || []).forEach(r => {
+    const id = String(r.id);
+    if (/^\d+$/.test(id)) {
+      const n = parseInt(id, 10);
+      // ignore leftover giant/random numeric ids so numbering restarts small
+      if (n <= 1000000 && n > max) max = n;
+    }
+  });
   return max + 1;
 }
 // Globally-unique record id. Sequential per-device numbering (nextSeqId)
@@ -565,8 +573,19 @@ const syncOnline = (o, act) => enq({
     Bank: o.bank || '',
     Amount: o.amount || '',
     Online: o.onlineApp || '',
-    PaymentDetails: o.paymentDetails || '',
-    StaffId: o.staffId || ''
+    PaymentDetails: o.paymentDetails || ''
+  }
+});
+
+// Worker duty record -> "Worker Details" sheet.
+const syncWorker = (w, act) => enq({
+  action: act, sheetName: 'Worker Details', data: {
+    ID: w.id,
+    StaffName: w.staffName || '',
+    DutyDate: w.dutyDate || '',
+    StaffMobile: w.staffMobile || '',
+    PartyMobile: w.partyMobile || '',
+    PartyAddress: w.partyAddress || ''
   }
 });
 
@@ -690,6 +709,7 @@ const I = {
   patients: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/></svg>`,
   staff: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/></svg>`,
   online: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="5" width="20" height="14" rx="2"/><path stroke-linecap="round" d="M2 10h20"/></svg>`,
+  worker: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V8a2 2 0 00-2-2h-4M10 6V4a2 2 0 012-2 2 2 0 012 2v2M10 6h4"/></svg>`,
   bills: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>`,
   sheets: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 10h18M3 14h18M5 3h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2z"/></svg>`,
   search: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-4.35-4.35m0 0A7.5 7.5 0 104.5 4.5a7.5 7.5 0 0012.15 12.15z"/></svg>`,
@@ -748,8 +768,21 @@ function mapOnlineRow_(r) {
     amount: r.Amount || '',
     onlineApp: r.Online || '',
     paymentDetails: r.PaymentDetails || '',
-    staffId: r.StaffId || '',
     createdAt: parseDMY_(r.Date) || PULL_FALLBACK_DATE_
+  };
+}
+
+function mapWorkerRow_(r) {
+  let created = PULL_FALLBACK_DATE_;
+  if (r.DutyDate) { const dt = new Date(r.DutyDate); if (!isNaN(dt.getTime())) created = dt.toISOString(); }
+  return {
+    id: String(r.ID || '').trim(),
+    staffName: r.StaffName || '',
+    dutyDate: r.DutyDate || '',
+    staffMobile: r.StaffMobile || '',
+    partyMobile: r.PartyMobile || '',
+    partyAddress: r.PartyAddress || '',
+    createdAt: created
   };
 }
 
@@ -826,7 +859,8 @@ async function pullFromServer(app) {
       _post({ action: 'list', sheetName: 'Staff Details', secret: GAS_SECRET }),
       _post({ action: 'list', sheetName: 'Manav Seva Kalyan Bill', secret: GAS_SECRET }),
       _post({ action: 'list', sheetName: 'Patient Care Centre Bill', secret: GAS_SECRET }),
-      _post({ action: 'list', sheetName: 'Online Details', secret: GAS_SECRET })
+      _post({ action: 'list', sheetName: 'Online Details', secret: GAS_SECRET }),
+      _post({ action: 'list', sheetName: 'Worker Details', secret: GAS_SECRET })
     ]);
     const rowsOf = i => {
       const r = settled[i];
@@ -841,11 +875,13 @@ async function pullFromServer(app) {
       ...mapBillRows_(rowsOf(3), 'PATIENT_CARE')
     ];
     const online = rowsOf(4).map(mapOnlineRow_).filter(r => r.id);
+    const worker = rowsOf(5).map(mapWorkerRow_).filter(r => r.id);
     let added = 0;
     added += await mergeServer_('patients', patients, app.patients);
     added += await mergeServer_('staff', staff, app.staff);
     added += await mergeServer_('bills', bills, app.bills);
     added += await mergeServer_('online', online, app.online);
+    added += await mergeServer_('worker', worker, app.worker);
     // Backfill Drive links onto staff records we already had locally (e.g.
     // pulled earlier, before the backend returned real URLs). Only fills
     // link fields — never touches locally-uploaded file bytes.
@@ -860,7 +896,7 @@ async function pullFromServer(app) {
       if (changed) { linkUpdates++; try { await dbPut('staff', loc); } catch (e) { } }
     }
     if (added || linkUpdates) {
-      app.patients.sort(byDate); app.staff.sort(byDate); app.bills.sort(byDate); app.online.sort(byDate);
+      app.patients.sort(byDate); app.staff.sort(byDate); app.bills.sort(byDate); app.online.sort(byDate); app.worker.sort(byDate);
       IDX.patients.build(app.patients); IDX.staff.build(app.staff); IDX.bills.build(app.bills);
       app.render();
       toast('Loaded ' + added + ' record' + (added > 1 ? 's' : '') + ' from Google Sheets \u2713', 'success', 3000);
@@ -882,13 +918,13 @@ class App {
     this.showForm = false; this.formType = null; this.formData = {};
     this.editingId = null; this.viewId = null; this.billLines = [];
     this.syncStatus = 'idle'; this.printBatch = [];
-    this.patients = []; this.staff = []; this.bills = []; this.online = [];
+    this.patients = []; this.staff = []; this.bills = []; this.online = []; this.worker = [];
     // search state — plain object, NOT reactive, preserved across renders
-    this.search = { patients: '', staff: '', bills: '', online: '' };
-    this.page = { patients: 0, staff: 0, bills: 0, online: 0 };
+    this.search = { patients: '', staff: '', bills: '', online: '', worker: '' };
+    this.page = { patients: 0, staff: 0, bills: 0, online: 0, worker: 0 };
     // from/to date-range filter per tab (yyyy-mm-dd from <input type=date>)
-    this.dateFrom = { patients: '', staff: '', bills: '', online: '' };
-    this.dateTo = { patients: '', staff: '', bills: '', online: '' };
+    this.dateFrom = { patients: '', staff: '', bills: '', online: '', worker: '' };
+    this.dateTo = { patients: '', staff: '', bills: '', online: '', worker: '' };
     this.loading = true;
     this._boot();
   }
@@ -897,13 +933,13 @@ class App {
     this.render();
     try {
       await openDB();
-      const [p, s, b, o] = await Promise.all([dbAll('patients'), dbAll('staff'), dbAll('bills'), dbAll('online')]);
-      this.patients = p.sort(byDate); this.staff = s.sort(byDate); this.bills = b.sort(byDate); this.online = (o || []).sort(byDate);
+      const [p, s, b, o, w] = await Promise.all([dbAll('patients'), dbAll('staff'), dbAll('bills'), dbAll('online'), dbAll('worker')]);
+      this.patients = p.sort(byDate); this.staff = s.sort(byDate); this.bills = b.sort(byDate); this.online = (o || []).sort(byDate); this.worker = (w || []).sort(byDate);
       IDX.patients.build(this.patients); IDX.staff.build(this.staff); IDX.bills.build(this.bills);
     } catch (e) {
       console.warn('[IDB fallback]', e);
       const ls = k => { try { return JSON.parse(localStorage.getItem('hbm_' + k) || '[]') } catch { return [] } };
-      this.patients = ls('patients'); this.staff = ls('staff'); this.bills = ls('bills'); this.online = ls('online');
+      this.patients = ls('patients'); this.staff = ls('staff'); this.bills = ls('bills'); this.online = ls('online'); this.worker = ls('worker');
       IDX.patients.build(this.patients); IDX.staff.build(this.staff); IDX.bills.build(this.bills);
     }
     await this._migrateIds();
@@ -1032,10 +1068,15 @@ class App {
     if (q && /^\d+$/.test(q) && (key === 'staff' || key === 'patients')) {
       const byId = this[key].filter(r => String(r.id) === q || String(r.id).startsWith(q));
       res = byId.length ? byId : IDX[key].search(this.search[key], this[key]);
+    } else if (key === 'worker') {
+      const ql = q.toLowerCase();
+      res = !ql ? this.worker.slice() : this.worker.filter(w =>
+        [w.staffName, w.staffMobile, w.partyMobile, w.partyAddress, w.dutyDate]
+          .some(v => String(v || '').toLowerCase().includes(ql)));
     } else if (key === 'online') {
       const ql = q.toLowerCase();
       res = !ql ? this.online.slice() : this.online.filter(o =>
-        [o.company, o.bank, o.onlineApp, o.paymentDetails, o.staffId, o.amount, o.date]
+        [o.company, o.bank, o.onlineApp, o.paymentDetails, o.amount, o.date]
           .some(v => String(v || '').toLowerCase().includes(ql)));
     } else {
       res = IDX[key].search(this.search[key], this[key]);
@@ -1050,7 +1091,8 @@ class App {
     const fromT = from ? new Date(from + 'T00:00:00').getTime() : -Infinity;
     const toT = to ? new Date(to + 'T23:59:59').getTime() : Infinity;
     return list.filter(r => {
-      const t = new Date(r.createdAt || 0).getTime();
+      const raw = key === 'worker' ? (r.dutyDate ? r.dutyDate + 'T12:00:00' : '') : r.createdAt;
+      const t = new Date(raw || 0).getTime();
       return !isNaN(t) && t >= fromT && t <= toT;
     });
   }
@@ -1112,7 +1154,7 @@ class App {
     const isEdit = !!this.editingId;
     const orig = isEdit ? this.patients.find(x => x.id === this.editingId) : null;
     const p = {
-      id: this.editingId || newRecordId(),
+      id: this.editingId || String(nextSeqId(this.patients)),
       name: nm, address: (fd.paddress || '').trim(), mobile: mb,
       photo: fd.pphoto || (orig ? orig.photo || '' : ''),
       createdAt: orig ? orig.createdAt : new Date().toISOString()
@@ -1141,6 +1183,49 @@ class App {
     this.formType = 'patient'; this.showForm = true; this.viewId = null; this.render();
   }
 
+  /* ════ WORKER DETAILS CRUD ════ */
+  async saveWorker() {
+    const fd = this.formData;
+    const staffName = (fd.wstaffname || '').trim();
+    if (!staffName) { toast('Staff name is required', 'error'); return }
+    const isEdit = !!this.editingId;
+    const orig = isEdit ? this.worker.find(x => x.id === this.editingId) : null;
+    const w = {
+      id: this.editingId || String(nextSeqId(this.worker)),
+      staffName,
+      dutyDate: fd.wdutydate || '',
+      staffMobile: (fd.wstaffmobile || '').trim(),
+      partyMobile: (fd.wpartymobile || '').trim(),
+      partyAddress: (fd.wpartyaddress || '').trim(),
+      createdAt: orig ? orig.createdAt : new Date().toISOString()
+    };
+    if (isEdit) {
+      const i = this.worker.findIndex(x => x.id === this.editingId);
+      this.worker[i] = w; this.editingId = null;
+    } else { this.worker.unshift(w); }
+    await this._save('worker', w); syncWorker(w, isEdit ? 'update' : 'append');
+    toast(isEdit ? 'Worker detail updated ✓' : 'Worker detail added ✓', 'success');
+    this.showForm = false; this.formData = {}; this.render();
+  }
+  async deleteWorker(id) {
+    const w = this.worker.find(x => x.id === id); if (!w) return;
+    const ok = await confirmDelete(w.staffName || 'this entry', 'Worker Detail');
+    if (!ok) return;
+    this.worker = this.worker.filter(x => x.id !== id);
+    await this._del('worker', id); syncDel('Worker Details', 'ID', id);
+    this.render(); toast('Worker detail deleted', 'info');
+  }
+  editWorker(id) {
+    const w = this.worker.find(x => x.id === id); if (!w) return;
+    this.editingId = id;
+    this.formData = {
+      wstaffname: w.staffName || '', wdutydate: w.dutyDate || '',
+      wstaffmobile: w.staffMobile || '', wpartymobile: w.partyMobile || '',
+      wpartyaddress: w.partyAddress || ''
+    };
+    this.formType = 'worker'; this.showForm = true; this.viewId = null; this.render();
+  }
+
   /* ════ ONLINE DETAILS CRUD ════ */
   async saveOnline() {
     const fd = this.formData;
@@ -1152,11 +1237,10 @@ class App {
     const isEdit = !!this.editingId;
     const orig = isEdit ? this.online.find(x => x.id === this.editingId) : null;
     const o = {
-      id: this.editingId || newRecordId(),
+      id: this.editingId || String(nextSeqId(this.online)),
       date: fd.odate || '',
       company, bank: (fd.obank || '').trim(), amount,
       onlineApp, paymentDetails: (fd.opaydetails || '').trim(),
-      staffId: (fd.ostaffid || '').trim(),
       createdAt: orig ? orig.createdAt : new Date().toISOString()
     };
     if (isEdit) {
@@ -1189,7 +1273,7 @@ class App {
       obank: o.bank || '', oamount: o.amount || '',
       oonline: o.onlineApp ? (appKnown ? o.onlineApp : 'Other App') : '',
       oonlineOther: appKnown ? '' : (o.onlineApp || ''),
-      opaydetails: o.paymentDetails || '', ostaffid: o.staffId || ''
+      opaydetails: o.paymentDetails || ''
     };
     this.formType = 'online'; this.showForm = true; this.viewId = null; this.render();
   }
@@ -1210,7 +1294,7 @@ class App {
     const isEdit = !!this.editingId;
     const orig = isEdit ? this.staff.find(x => x.id === this.editingId) : null;
     const s = {
-      id: this.editingId || newRecordId(), name: nm, nickname: nk, mobile: mb, type: fd.stype,
+      id: this.editingId || String(nextSeqId(this.staff)), name: nm, nickname: nk, mobile: mb, type: fd.stype,
       aadhar: aa, pan,
       rate: fd.srate ? Number(fd.srate) : (orig ? orig.rate || '' : ''),
       startDate: fd.sstartDate || (orig ? orig.startDate || '' : ''),
@@ -1333,11 +1417,11 @@ class App {
     if (!days || days < 1) { toast('Days must be ≥1', 'error'); return }
     if (!rate || rate <= 0) { toast('Enter a valid rate', 'error'); return }
     if (this.billLines.length >= 9) { toast('Maximum 9 line items per bill', 'error'); return }
-    this.billLines.push({ no: this.billLines.length + 1, duty: fd.bduty || 'Home', startDate: fd.bstartDate, endDate: fd.bendDate, days, shift: fd.bshift || 'Day', rate, amount: days * rate });
+    this.billLines.push({ no: fd.bstaff || (this.billLines.length + 1), duty: fd.bduty || 'Home', startDate: fd.bstartDate, endDate: fd.bendDate, days, shift: fd.bshift || 'Day', rate, amount: days * rate });
     Object.assign(fd, { bduty: 'Home', bstartDate: '', bendDate: '', bdays: '', bshift: 'Day', brate: '' });
     this.render();
   }
-  removeLine(i) { this.billLines.splice(i, 1); this.billLines.forEach((l, x) => l.no = x + 1); this.render() }
+  removeLine(i) { this.billLines.splice(i, 1); this.render() }
   async saveBillOnly() { const b = await this._billHTML(); if (!b) return; toast(`Bill ${b.billNo} saved — ₹${Number(b.totalAmount).toLocaleString('en-IN')}`, 'success', 4000); this.billLines = []; this.formData = {}; this.showForm = false; this.render() }
   async saveBillAndPrint() { const b = await this._billHTML(); if (!b) return; toast(`Bill ${b.billNo} generated`, 'success', 4000); this.billLines = []; this.formData = {}; this.showForm = false; this.render(); setTimeout(() => doPrint([b]), 350) }
   async _billHTML() {
@@ -1351,7 +1435,7 @@ class App {
     const sta = this.staff.find(s => s.id === fd.bstaff);
     const pfx = fd.bcenter === 'MANAV_SEVA' ? 'MSK' : 'PCC';
     const b = {
-      id: newRecordId(), center: fd.bcenter,
+      id: String(nextSeqId(this.bills)), center: fd.bcenter,
       billNo: nextBillNo(pfx, this.bills), date: todayStr(), generatedDate: todayStr(),
       patientId: fd.bpatient, patientName: pat ? pat.name : '', patientAddress: pat ? pat.address || '' : '',
       staffId: fd.bstaff, staffName: sta ? sta.name : '', staffType: sta ? sta.type : '',
@@ -1419,10 +1503,11 @@ class App {
     else if (this.tab === 'patients') body = this._rPatients();
     else if (this.tab === 'staff') body = this._rStaff();
     else if (this.tab === 'online') body = this._rOnline();
+    else if (this.tab === 'worker') body = this._rWorker();
     else body = this._rBills();
     const main = `<main class="max-w-7xl mx-auto px-3 sm:px-5 py-5 no-print">${body}</main>`;
     const mnav = `<nav id="mobile-nav" class="no-print" role="navigation">
-  ${[['dashboard', 'Home', I.dashboard], ['patients', 'Patients', I.patients], ['staff', 'Staff', I.staff], ['online', 'Online', I.online], ['bills', 'Bills', I.bills]].map(([k, l, ic]) => `
+  ${[['dashboard', 'Home', I.dashboard], ['patients', 'Patients', I.patients], ['staff', 'Staff', I.staff], ['online', 'Online', I.online], ['worker', 'Worker', I.worker], ['bills', 'Bills', I.bills]].map(([k, l, ic]) => `
   <button class="mnav-btn${this.tab === k ? ' active' : ''}" onclick="APP.setTab('${k}')">
     <span style="width:22px;height:22px;display:inline-flex">${ic}</span><span>${l}</span>
   </button>`).join('')}
@@ -1449,6 +1534,55 @@ class App {
         }
       }
     }
+  }
+
+  /* ════ WORKER DETAILS ════ */
+  _rWorker() {
+    const fd = this.formData;
+    if (this.showForm && this.formType === 'worker') {
+      return `
+<button onclick="APP.showForm=false;APP.editingId=null;APP.formData={};APP.render()" class="fbtn fbtn-cancel mb-4 text-sm">${ico('back')} Back</button>
+<div class="bg-white rounded-2xl shadow-sm border border-gray-100 p-5 w-full max-w-lg mx-auto">
+  <h3 class="font-bold text-base mb-4 flex items-center gap-2">${this.editingId ? 'Edit' : 'Add'} Worker Detail ${this.editingId ? `<span class="text-xs font-semibold px-2 py-0.5 rounded" style="background:#f1f5f9;color:#94a3b8">ID #${esc(this.editingId)}</span>` : `<span class="text-xs font-semibold px-2 py-0.5 rounded" style="background:#ffe4e6;color:#be123c">New</span>`}</h3>
+  <div class="grid gap-4 mb-4">
+    <div><label class="flbl">Staff Name</label><input class="finp" placeholder="Staff name" value="${esc(fd.wstaffname || '')}" oninput="APP.formData.wstaffname=this.value"></div>
+    <div><label class="flbl">Duty Date</label><input class="finp" type="date" value="${esc(fd.wdutydate || '')}" oninput="APP.formData.wdutydate=this.value"></div>
+    <div><label class="flbl">Staff Mobile No.</label><input class="finp" type="tel" inputmode="numeric" placeholder="Staff number" value="${esc(fd.wstaffmobile || '')}" oninput="APP.formData.wstaffmobile=this.value.replace(/[^0-9+]/g,'')"></div>
+    <div><label class="flbl">Party Mobile No.</label><input class="finp" type="tel" inputmode="numeric" placeholder="Party number" value="${esc(fd.wpartymobile || '')}" oninput="APP.formData.wpartymobile=this.value.replace(/[^0-9+]/g,'')"></div>
+    <div><label class="flbl">Party Address</label><textarea class="finp" rows="2" placeholder="Party address" oninput="APP.formData.wpartyaddress=this.value">${esc(fd.wpartyaddress || '')}</textarea></div>
+  </div>
+  <div class="flex gap-3">
+    <button onclick="APP.saveWorker()" class="fbtn fbtn-primary flex-1 justify-center" style="background:linear-gradient(135deg,#f43f5e,#e11d48)">✓ Save</button>
+    <button onclick="APP.showForm=false;APP.editingId=null;APP.formData={};APP.render()" class="fbtn fbtn-cancel flex-1 justify-center">✕ Cancel</button>
+  </div>
+</div>`;
+    }
+    const { list, total, pages } = this._page('worker');
+    return `
+<div class="flex flex-wrap items-center gap-3 mb-4">
+  <button onclick="APP.formType='worker';APP.showForm=true;APP.editingId=null;APP.formData={};APP.render()" class="fbtn" style="background:#f43f5e;color:#fff">${ico('plus')} Add Worker Detail</button>
+  ${this._searchBar('worker', 'Search staff, mobile, party, address…', '#f43f5e')}
+  <span class="text-xs text-gray-400 font-medium">${total} record${total !== 1 ? 's' : ''}</span>
+</div>
+${!total ? `<div class="text-center py-16 text-gray-400 text-sm">${(this.search.worker || this.dateFrom.worker || this.dateTo.worker) ? 'No worker details match.' : 'No worker details yet.'}</div>` :
+        `<div class="grid-auto">
+${list.map(w => `
+<div class="card p-4" style="border-left:4px solid #f43f5e">
+  <div class="flex items-start justify-between gap-2">
+    <div class="min-w-0">
+      <p class="font-bold text-gray-900 truncate">${esc(w.staffName || '—')}</p>
+      ${w.dutyDate ? `<p class="text-xs text-gray-500 mt-0.5">📅 Duty: ${esc(w.dutyDate)}</p>` : ''}
+      ${w.staffMobile ? `<p class="text-xs text-gray-600 mt-0.5">📞 Staff: ${esc(w.staffMobile)}</p>` : ''}
+      ${w.partyMobile ? `<p class="text-xs text-gray-600 mt-0.5">📞 Party: ${esc(w.partyMobile)}</p>` : ''}
+      ${w.partyAddress ? `<p class="text-xs text-gray-400 mt-0.5">📍 ${esc(w.partyAddress)}</p>` : ''}
+    </div>
+    <div class="flex flex-col gap-1.5 flex-shrink-0">
+      <button onclick="APP.editWorker('${w.id}')" class="fbtn text-xs" style="background:#fef3c7;color:#92400e;border:none">${ico('edit', 'w-3 h-3')} Edit</button>
+      <button onclick="APP.deleteWorker('${w.id}')" class="fbtn text-xs" style="background:#fef2f2;color:#dc2626;border:none">${ico('trash', 'w-3 h-3')} Delete</button>
+    </div>
+  </div>
+</div>`).join('')}
+</div>${this._pager('worker', total, pages)}`}`;
   }
 
   /* ════ ONLINE DETAILS ════ */
@@ -1481,7 +1615,6 @@ class App {
     </div>
     ${app === 'Other App' ? `<div><label class="flbl">App Name</label><input class="finp" placeholder="App name" value="${esc(fd.oonlineOther || '')}" oninput="APP.formData.oonlineOther=this.value"></div>` : ''}
     <div><label class="flbl">Payment Details</label><input class="finp" placeholder="Reference / transaction details" value="${esc(fd.opaydetails || '')}" oninput="APP.formData.opaydetails=this.value"></div>
-    <div><label class="flbl">Staff ID</label><input class="finp" placeholder="Staff ID" value="${esc(fd.ostaffid || '')}" oninput="APP.formData.ostaffid=this.value"></div>
   </div>
   <div class="flex gap-3">
     <button onclick="APP.saveOnline()" class="fbtn fbtn-primary flex-1 justify-center" style="background:linear-gradient(135deg,#0ea5e9,#0284c7)">✓ Save</button>
@@ -1509,7 +1642,6 @@ ${list.map(o => `
       <p class="text-lg font-black text-green-600 mt-0.5">₹${esc(Number(o.amount || 0).toLocaleString('en-IN'))}</p>
       <p class="text-xs text-gray-500 mt-0.5">${o.bank ? '🏦 ' + esc(o.bank) + (o.date ? ' · ' : '') : ''}${o.date ? '📅 ' + esc(o.date) : ''}</p>
       ${o.paymentDetails ? `<p class="text-xs text-gray-400 mt-0.5 truncate">${esc(o.paymentDetails)}</p>` : ''}
-      ${o.staffId ? `<p class="text-xs text-gray-400 mt-0.5">Staff ID: ${esc(o.staffId)}</p>` : ''}
     </div>
     <div class="flex flex-col gap-1.5 flex-shrink-0">
       <button onclick="APP.editOnline('${o.id}')" class="fbtn text-xs" style="background:#fef3c7;color:#92400e;border:none">${ico('edit', 'w-3 h-3')} Edit</button>
@@ -1528,6 +1660,8 @@ ${list.map(o => `
       { k: 'patients', label: 'Patients', value: this.patients.length, ic: I.patients, g: 'linear-gradient(135deg,#3b82f6,#2563eb)' },
       { k: 'staff', label: 'Staff', value: this.staff.length, ic: I.staff, g: 'linear-gradient(135deg,#10b981,#0d9488)' },
       { k: 'bills', label: 'Bills', value: this.bills.length, ic: I.bills, g: 'linear-gradient(135deg,#7c3aed,#6d28d9)' },
+      { k: 'online', label: 'Online Details', value: this.online.length, ic: I.online, g: 'linear-gradient(135deg,#0ea5e9,#0284c7)' },
+      { k: 'worker', label: 'Worker Details', value: this.worker.length, ic: I.worker, g: 'linear-gradient(135deg,#f43f5e,#e11d48)' },
       { k: 'bills', label: 'Total Amount', value: fmtAmt, ic: I.bills, g: 'linear-gradient(135deg,#f59e0b,#d97706)' }
     ];
     return `
@@ -1546,7 +1680,7 @@ ${list.map(o => `
   }
 
   _navBtns() {
-    return [['dashboard', 'Dashboard', null, '#6366f1'], ['patients', 'Patients', this.patients.length, '#3b82f6'], ['staff', 'Staff', this.staff.length, '#10b981'], ['online', 'Online Details', this.online.length, '#0ea5e9'], ['bills', 'Bills', this.bills.length, '#7c3aed']].map(([k, l, cnt, c]) => `
+    return [['dashboard', 'Dashboard', null, '#6366f1'], ['patients', 'Patients', this.patients.length, '#3b82f6'], ['staff', 'Staff', this.staff.length, '#10b981'], ['online', 'Online Details', this.online.length, '#0ea5e9'], ['worker', 'Worker Details', this.worker.length, '#f43f5e'], ['bills', 'Bills', this.bills.length, '#7c3aed']].map(([k, l, cnt, c]) => `
 <button onclick="APP.setTab('${k}')" class="nav-btn${this.tab === k ? ' active' : ''}" style="${this.tab === k ? `background:${c};color:#fff;box-shadow:0 6px 16px ${c}55` : ''}">
   <span class="nav-btn-ic" style="background:${this.tab === k ? 'rgba(255,255,255,.22)' : c + '1a'};color:${this.tab === k ? '#fff' : c}">${I[k]}</span>
   <span>${l}</span>

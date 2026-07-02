@@ -266,8 +266,8 @@ function askCopies() {
     ov.innerHTML = `
 <div id="dlg-card">
   <h3>Print Copies</h3>
-  <p>How many copies do you want? (2 bills fit on each A4 sheet)</p>
-  <input id="dlg-input" type="number" min="1" max="20" value="2" inputmode="numeric">
+  <p>How many copies do you want to print? (2 bills fit on each A4 sheet)</p>
+  <input id="dlg-input" type="number" min="1" max="20" value="1" inputmode="numeric">
   <div id="dlg-actions">
     <button class="dlg-btn cancel" id="dlg-cancel">Cancel</button>
     <button class="dlg-btn ok" id="dlg-ok">OK</button>
@@ -608,7 +608,8 @@ function syncBill(b) {
       Rate: l.rate || '',
       Amount: l.amount || '',
       Total: i === 0 ? b.totalAmount : '',
-      Words: i === 0 ? b.amountInWords : ''
+      Words: i === 0 ? b.amountInWords : '',
+      Printed: i === 0 ? (b.printed ? 'Yes' : 'No') : ''
     }
   }));
 }
@@ -816,6 +817,7 @@ function mapBillRows_(rows, center) {
         patientId: '', patientName: r.Patient || '',
         staffId: '', staffName: r.Staff || '', staffType: r.StaffType || '',
         lines: [], totalAmount: 0, amountInWords: '',
+        printed: String(r.Printed || '').toLowerCase() === 'yes',
         createdAt: parseDMY_(r.Date) || PULL_FALLBACK_DATE_
       });
     }
@@ -1423,7 +1425,7 @@ class App {
   }
   removeLine(i) { this.billLines.splice(i, 1); this.render() }
   async saveBillOnly() { const b = await this._billHTML(); if (!b) return; toast(`Bill ${b.billNo} saved — ₹${Number(b.totalAmount).toLocaleString('en-IN')}`, 'success', 4000); this.billLines = []; this.formData = {}; this.showForm = false; this.render() }
-  async saveBillAndPrint() { const b = await this._billHTML(); if (!b) return; toast(`Bill ${b.billNo} generated`, 'success', 4000); this.billLines = []; this.formData = {}; this.showForm = false; this.render(); setTimeout(() => doPrint([b]), 350) }
+  async saveBillAndPrint() { const b = await this._billHTML(); if (!b) return; this._markBillPrinted(b); toast(`Bill ${b.billNo} generated`, 'success', 4000); this.billLines = []; this.formData = {}; this.showForm = false; this.render(); setTimeout(() => doPrint([b]), 350) }
   async _billHTML() {
     const fd = this.formData;
     if (!fd.bcenter) { toast('Select a centre', 'error'); return null }
@@ -1441,6 +1443,7 @@ class App {
       staffId: fd.bstaff, staffName: sta ? sta.name : '', staffType: sta ? sta.type : '',
       lines: JSON.parse(JSON.stringify(this.billLines)),
       totalAmount: total, amountInWords: n2w(total),
+      printed: false,
       createdAt: new Date().toISOString()
     };
     this.bills.unshift(b); IDX.bills.add(b);
@@ -1456,7 +1459,16 @@ class App {
     if (b) syncDel(b.center === 'MANAV_SEVA' ? 'Manav Seva Kalyan Bill' : 'Patient Care Centre Bill', 'BillNo', b.billNo);
     this.render(); toast('Bill deleted', 'info');
   }
-  printBill(id) { const b = this.bills.find(x => x.id === id); if (!b) { toast('Bill not found', 'error'); return } doPrint([b]) }
+  printBill(id) { const b = this.bills.find(x => x.id === id); if (!b) { toast('Bill not found', 'error'); return } this._markBillPrinted(b); this.render(); doPrint([b]) }
+  // Mark a bill as printed (once), persist locally, and sync the flag up so
+  // the dashboard's "Bills Printed" count is correct across devices.
+  _markBillPrinted(b) {
+    if (!b || b.printed) return;
+    b.printed = true;
+    this._save('bills', b);
+    const sheet = b.center === 'MANAV_SEVA' ? 'Manav Seva Kalyan Bill' : 'Patient Care Centre Bill';
+    enq({ action: 'update', sheetName: sheet, data: { ID: b.id, Printed: 'Yes' } });
+  }
   viewBill(id) { this.viewId = id; this.render() }
   toggleBatch(id) {
     const i = this.printBatch.indexOf(id);
@@ -1659,7 +1671,8 @@ ${list.map(o => `
     const cards = [
       { k: 'patients', label: 'Patients', value: this.patients.length, ic: I.patients, g: 'linear-gradient(135deg,#3b82f6,#2563eb)' },
       { k: 'staff', label: 'Staff', value: this.staff.length, ic: I.staff, g: 'linear-gradient(135deg,#10b981,#0d9488)' },
-      { k: 'bills', label: 'Bills', value: this.bills.length, ic: I.bills, g: 'linear-gradient(135deg,#7c3aed,#6d28d9)' },
+      { k: 'bills', label: 'Bills Generated', value: this.bills.length, ic: I.bills, g: 'linear-gradient(135deg,#7c3aed,#6d28d9)' },
+      { k: 'bills', label: 'Bills Printed', value: this.bills.filter(b => b.printed).length, ic: I.print, g: 'linear-gradient(135deg,#8b5cf6,#7c3aed)' },
       { k: 'online', label: 'Online Details', value: this.online.length, ic: I.online, g: 'linear-gradient(135deg,#0ea5e9,#0284c7)' },
       { k: 'worker', label: 'Worker Details', value: this.worker.length, ic: I.worker, g: 'linear-gradient(135deg,#f43f5e,#e11d48)' },
       { k: 'bills', label: 'Total Amount', value: fmtAmt, ic: I.bills, g: 'linear-gradient(135deg,#f59e0b,#d97706)' }
@@ -2082,7 +2095,7 @@ ${list.map(s => `
 </div>`;
     }
     const { list, total, pages } = this._page('bills');
-    h += `<div class="mb-4">${this._searchBar('bills', 'Search bills by patient, bill no, date…', '#7c3aed')}</div>`;
+    h += `<div class="flex flex-wrap items-center gap-3 mb-4">${this._searchBar('bills', 'Search bills by patient, bill no, date…', '#7c3aed')}</div>`;
     if (!this.bills.length) return h + `<div class="text-center py-12 text-gray-400 text-sm">No bills yet. Click + New Bill to start.</div>`;
     if (!total) return h + `<div class="text-center py-12 text-gray-400 text-sm">No bills match your search.</div>`;
     h += `<div class="grid-auto">`;

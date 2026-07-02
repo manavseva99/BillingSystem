@@ -2,7 +2,7 @@
 /* ══════════════════════════════════════════════════════════
    CONFIG
 ══════════════════════════════════════════════════════════ */
-const GAS_URL = 'https://script.google.com/macros/s/AKfycbyOUmx4CMaEE6JiGYtdmk84Ek96Uw0zsWQCTitdEf1JQ7ZBIt0OvhaTaon_2EOQqhn2/exec';
+const GAS_URL = 'https://script.google.com/macros/s/AKfycbyvRE-T1EQJ61oO50EPx9gNAmAa7TgxP6KqQmbz_wsf_LdjMESFLudb42dGTbSeoDOCUg/exec';
 // Must match API_SECRET in the Apps Script backend exactly, or every
 // request gets rejected as Unauthorized.
 const GAS_SECRET = 'PatientCare9819086415&ManavSeva9920700815';
@@ -73,7 +73,7 @@ document.body.classList.toggle('offline', !navigator.onLine); // initial banner 
 /* ══════════════════════════════════════════════════════════
    IndexedDB
 ══════════════════════════════════════════════════════════ */
-const DB_NAME = 'HospitalBMS3', DB_VER = 2;
+const DB_NAME = 'HospitalBMS3', DB_VER = 3;
 let _db = null;
 let _dbPromise = null;
 function openDB() {
@@ -84,7 +84,8 @@ function openDB() {
       const d = e.target.result;
       [{ name: 'patients', indexes: ['createdAt', 'name', 'mobile'] },
       { name: 'staff', indexes: ['createdAt', 'name', 'type'] },
-      { name: 'bills', indexes: ['createdAt', 'center', 'patientName', 'billNo'] }
+      { name: 'bills', indexes: ['createdAt', 'center', 'patientName', 'billNo'] },
+      { name: 'online', indexes: ['createdAt', 'company', 'date'] }
       ].forEach(({ name, indexes }) => {
         if (!d.objectStoreNames.contains(name)) {
           const s = d.createObjectStore(name, { keyPath: 'id' });
@@ -553,6 +554,22 @@ const syncStaff = (s, act, changed) => {
 
 const syncDel = (sheet, key, val) => enq({ action: 'delete', sheetName: sheet, data: { [key]: val } });
 
+// Online payment record -> "Online Details" sheet. Company / Online are
+// stored already-resolved (the custom text when "Others" / "Other App" was
+// picked), so the sheet is human-readable.
+const syncOnline = (o, act) => enq({
+  action: act, sheetName: 'Online Details', data: {
+    ID: o.id,
+    Date: o.date || '',
+    Company: o.company || '',
+    Bank: o.bank || '',
+    Amount: o.amount || '',
+    Online: o.onlineApp || '',
+    PaymentDetails: o.paymentDetails || '',
+    StaffId: o.staffId || ''
+  }
+});
+
 function syncBill(b) {
   const sheet = b.center === 'MANAV_SEVA' ? 'Manav Seva Kalyan Bill' : 'Patient Care Centre Bill';
   (b.lines || []).forEach((l, i) => enq({
@@ -672,6 +689,7 @@ const I = {
   dashboard: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 5a1 1 0 011-1h5a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM13 5a1 1 0 011-1h5a1 1 0 011 1v3a1 1 0 01-1 1h-5a1 1 0 01-1-1V5zM13 13a1 1 0 011-1h5a1 1 0 011 1v6a1 1 0 01-1 1h-5a1 1 0 01-1-1v-6zM4 15a1 1 0 011-1h5a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1v-4z"/></svg>`,
   patients: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/></svg>`,
   staff: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/></svg>`,
+  online: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="5" width="20" height="14" rx="2"/><path stroke-linecap="round" d="M2 10h20"/></svg>`,
   bills: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>`,
   sheets: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 10h18M3 14h18M5 3h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2z"/></svg>`,
   search: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-4.35-4.35m0 0A7.5 7.5 0 104.5 4.5a7.5 7.5 0 0012.15 12.15z"/></svg>`,
@@ -717,6 +735,20 @@ function mapPatientRow_(r) {
     address: r.Address || '',
     mobile: r.Mobile || '',
     photo: '',
+    createdAt: parseDMY_(r.Date) || PULL_FALLBACK_DATE_
+  };
+}
+
+function mapOnlineRow_(r) {
+  return {
+    id: String(r.ID || '').trim(),
+    date: r.Date || '',
+    company: r.Company || '',
+    bank: r.Bank || '',
+    amount: r.Amount || '',
+    onlineApp: r.Online || '',
+    paymentDetails: r.PaymentDetails || '',
+    staffId: r.StaffId || '',
     createdAt: parseDMY_(r.Date) || PULL_FALLBACK_DATE_
   };
 }
@@ -793,7 +825,8 @@ async function pullFromServer(app) {
       _post({ action: 'list', sheetName: 'Patient Details', secret: GAS_SECRET }),
       _post({ action: 'list', sheetName: 'Staff Details', secret: GAS_SECRET }),
       _post({ action: 'list', sheetName: 'Manav Seva Kalyan Bill', secret: GAS_SECRET }),
-      _post({ action: 'list', sheetName: 'Patient Care Centre Bill', secret: GAS_SECRET })
+      _post({ action: 'list', sheetName: 'Patient Care Centre Bill', secret: GAS_SECRET }),
+      _post({ action: 'list', sheetName: 'Online Details', secret: GAS_SECRET })
     ]);
     const rowsOf = i => {
       const r = settled[i];
@@ -807,10 +840,12 @@ async function pullFromServer(app) {
       ...mapBillRows_(rowsOf(2), 'MANAV_SEVA'),
       ...mapBillRows_(rowsOf(3), 'PATIENT_CARE')
     ];
+    const online = rowsOf(4).map(mapOnlineRow_).filter(r => r.id);
     let added = 0;
     added += await mergeServer_('patients', patients, app.patients);
     added += await mergeServer_('staff', staff, app.staff);
     added += await mergeServer_('bills', bills, app.bills);
+    added += await mergeServer_('online', online, app.online);
     // Backfill Drive links onto staff records we already had locally (e.g.
     // pulled earlier, before the backend returned real URLs). Only fills
     // link fields — never touches locally-uploaded file bytes.
@@ -825,7 +860,7 @@ async function pullFromServer(app) {
       if (changed) { linkUpdates++; try { await dbPut('staff', loc); } catch (e) { } }
     }
     if (added || linkUpdates) {
-      app.patients.sort(byDate); app.staff.sort(byDate); app.bills.sort(byDate);
+      app.patients.sort(byDate); app.staff.sort(byDate); app.bills.sort(byDate); app.online.sort(byDate);
       IDX.patients.build(app.patients); IDX.staff.build(app.staff); IDX.bills.build(app.bills);
       app.render();
       toast('Loaded ' + added + ' record' + (added > 1 ? 's' : '') + ' from Google Sheets \u2713', 'success', 3000);
@@ -847,13 +882,13 @@ class App {
     this.showForm = false; this.formType = null; this.formData = {};
     this.editingId = null; this.viewId = null; this.billLines = [];
     this.syncStatus = 'idle'; this.printBatch = [];
-    this.patients = []; this.staff = []; this.bills = [];
+    this.patients = []; this.staff = []; this.bills = []; this.online = [];
     // search state — plain object, NOT reactive, preserved across renders
-    this.search = { patients: '', staff: '', bills: '' };
-    this.page = { patients: 0, staff: 0, bills: 0 };
+    this.search = { patients: '', staff: '', bills: '', online: '' };
+    this.page = { patients: 0, staff: 0, bills: 0, online: 0 };
     // from/to date-range filter per tab (yyyy-mm-dd from <input type=date>)
-    this.dateFrom = { patients: '', staff: '', bills: '' };
-    this.dateTo = { patients: '', staff: '', bills: '' };
+    this.dateFrom = { patients: '', staff: '', bills: '', online: '' };
+    this.dateTo = { patients: '', staff: '', bills: '', online: '' };
     this.loading = true;
     this._boot();
   }
@@ -862,13 +897,13 @@ class App {
     this.render();
     try {
       await openDB();
-      const [p, s, b] = await Promise.all([dbAll('patients'), dbAll('staff'), dbAll('bills')]);
-      this.patients = p.sort(byDate); this.staff = s.sort(byDate); this.bills = b.sort(byDate);
+      const [p, s, b, o] = await Promise.all([dbAll('patients'), dbAll('staff'), dbAll('bills'), dbAll('online')]);
+      this.patients = p.sort(byDate); this.staff = s.sort(byDate); this.bills = b.sort(byDate); this.online = (o || []).sort(byDate);
       IDX.patients.build(this.patients); IDX.staff.build(this.staff); IDX.bills.build(this.bills);
     } catch (e) {
       console.warn('[IDB fallback]', e);
       const ls = k => { try { return JSON.parse(localStorage.getItem('hbm_' + k) || '[]') } catch { return [] } };
-      this.patients = ls('patients'); this.staff = ls('staff'); this.bills = ls('bills');
+      this.patients = ls('patients'); this.staff = ls('staff'); this.bills = ls('bills'); this.online = ls('online');
       IDX.patients.build(this.patients); IDX.staff.build(this.staff); IDX.bills.build(this.bills);
     }
     await this._migrateIds();
@@ -997,6 +1032,11 @@ class App {
     if (q && /^\d+$/.test(q) && (key === 'staff' || key === 'patients')) {
       const byId = this[key].filter(r => String(r.id) === q || String(r.id).startsWith(q));
       res = byId.length ? byId : IDX[key].search(this.search[key], this[key]);
+    } else if (key === 'online') {
+      const ql = q.toLowerCase();
+      res = !ql ? this.online.slice() : this.online.filter(o =>
+        [o.company, o.bank, o.onlineApp, o.paymentDetails, o.staffId, o.amount, o.date]
+          .some(v => String(v || '').toLowerCase().includes(ql)));
     } else {
       res = IDX[key].search(this.search[key], this[key]);
     }
@@ -1099,6 +1139,59 @@ class App {
     this.editingId = id;
     this.formData = { pname: p.name, paddress: p.address || '', pmobile: p.mobile, pphoto: p.photo || '' };
     this.formType = 'patient'; this.showForm = true; this.viewId = null; this.render();
+  }
+
+  /* ════ ONLINE DETAILS CRUD ════ */
+  async saveOnline() {
+    const fd = this.formData;
+    const company = fd.ocompany === 'Others' ? (fd.ocompanyOther || '').trim() : (fd.ocompany || '');
+    const onlineApp = fd.oonline === 'Other App' ? (fd.oonlineOther || '').trim() : (fd.oonline || '');
+    const amount = (fd.oamount || '').toString().trim();
+    if (!company) { toast('Please choose or enter a company', 'error'); return }
+    if (!amount) { toast('Amount is required', 'error'); return }
+    const isEdit = !!this.editingId;
+    const orig = isEdit ? this.online.find(x => x.id === this.editingId) : null;
+    const o = {
+      id: this.editingId || newRecordId(),
+      date: fd.odate || '',
+      company, bank: (fd.obank || '').trim(), amount,
+      onlineApp, paymentDetails: (fd.opaydetails || '').trim(),
+      staffId: (fd.ostaffid || '').trim(),
+      createdAt: orig ? orig.createdAt : new Date().toISOString()
+    };
+    if (isEdit) {
+      const i = this.online.findIndex(x => x.id === this.editingId);
+      this.online[i] = o; this.editingId = null;
+    } else { this.online.unshift(o); }
+    await this._save('online', o); syncOnline(o, isEdit ? 'update' : 'append');
+    toast(isEdit ? 'Online detail updated ✓' : 'Online detail added ✓', 'success');
+    this.showForm = false; this.formData = {}; this.render();
+  }
+  async deleteOnline(id) {
+    const o = this.online.find(x => x.id === id); if (!o) return;
+    const ok = await confirmDelete(o.company || 'this entry', 'Online Detail');
+    if (!ok) return;
+    this.online = this.online.filter(x => x.id !== id);
+    await this._del('online', id); syncDel('Online Details', 'ID', id);
+    this.render(); toast('Online detail deleted', 'info');
+  }
+  editOnline(id) {
+    const o = this.online.find(x => x.id === id); if (!o) return;
+    const KNOWN_C = ['Manav Seva Kalyan', 'Patient Care Center'];
+    const KNOWN_A = ['GPay', 'PhonePe', 'Paytm', 'Bank App'];
+    const compKnown = KNOWN_C.includes(o.company);
+    const appKnown = KNOWN_A.includes(o.onlineApp);
+    this.editingId = id;
+    this.formData = {
+      odate: o.date || '',
+      ocompany: o.company ? (compKnown ? o.company : 'Others') : '',
+      ocompanyOther: compKnown ? '' : (o.company || ''),
+      obank: o.bank || '', oamount: o.amount || '',
+      oonline: o.onlineApp ? (appKnown ? o.onlineApp : 'Other App') : '',
+      oonlineOther: appKnown ? '' : (o.onlineApp || ''),
+      opaydetails: o.paymentDetails || '', ostaffid: o.staffId || ''
+    };
+    this.formType = 'online'; this.showForm = true; this.viewId = null; this.render();
   }
 
   /* ════ STAFF ════ */
@@ -1325,10 +1418,11 @@ class App {
     else if (this.tab === 'dashboard') body = this._rDashboard();
     else if (this.tab === 'patients') body = this._rPatients();
     else if (this.tab === 'staff') body = this._rStaff();
+    else if (this.tab === 'online') body = this._rOnline();
     else body = this._rBills();
     const main = `<main class="max-w-7xl mx-auto px-3 sm:px-5 py-5 no-print">${body}</main>`;
     const mnav = `<nav id="mobile-nav" class="no-print" role="navigation">
-  ${[['dashboard', 'Home', I.dashboard], ['patients', 'Patients', I.patients], ['staff', 'Staff', I.staff], ['bills', 'Bills', I.bills]].map(([k, l, ic]) => `
+  ${[['dashboard', 'Home', I.dashboard], ['patients', 'Patients', I.patients], ['staff', 'Staff', I.staff], ['online', 'Online', I.online], ['bills', 'Bills', I.bills]].map(([k, l, ic]) => `
   <button class="mnav-btn${this.tab === k ? ' active' : ''}" onclick="APP.setTab('${k}')">
     <span style="width:22px;height:22px;display:inline-flex">${ic}</span><span>${l}</span>
   </button>`).join('')}
@@ -1357,6 +1451,75 @@ class App {
     }
   }
 
+  /* ════ ONLINE DETAILS ════ */
+  _rOnline() {
+    const fd = this.formData;
+    const COMPANIES = ['Manav Seva Kalyan', 'Patient Care Center', 'Others'];
+    const APPS = ['GPay', 'PhonePe', 'Paytm', 'Bank App', 'Other App'];
+    if (this.showForm && this.formType === 'online') {
+      const comp = fd.ocompany || '', app = fd.oonline || '';
+      return `
+<button onclick="APP.showForm=false;APP.editingId=null;APP.formData={};APP.render()" class="fbtn fbtn-cancel mb-4 text-sm">${ico('back')} Back</button>
+<div class="bg-white rounded-2xl shadow-sm border border-gray-100 p-5 w-full max-w-lg mx-auto">
+  <h3 class="font-bold text-base mb-4 flex items-center gap-2">${this.editingId ? 'Edit' : 'Add'} Online Payment ${this.editingId ? `<span class="text-xs font-semibold px-2 py-0.5 rounded" style="background:#f1f5f9;color:#94a3b8">ID #${esc(this.editingId)}</span>` : `<span class="text-xs font-semibold px-2 py-0.5 rounded" style="background:#e0f2fe;color:#0369a1">New</span>`}</h3>
+  <div class="grid gap-4 mb-4">
+    <div><label class="flbl">Date</label><input class="finp" type="date" value="${esc(fd.odate || '')}" oninput="APP.formData.odate=this.value"></div>
+    <div><label class="flbl">Company</label>
+      <select class="finp" onchange="APP.formData.ocompany=this.value;APP.render()">
+        <option value="" ${!comp ? 'selected' : ''} disabled>Select company</option>
+        ${COMPANIES.map(c => `<option value="${c}" ${comp === c ? 'selected' : ''}>${c}</option>`).join('')}
+      </select>
+    </div>
+    ${comp === 'Others' ? `<div><label class="flbl">Company Name</label><input class="finp" placeholder="Company name" value="${esc(fd.ocompanyOther || '')}" oninput="APP.formData.ocompanyOther=this.value"></div>` : ''}
+    <div><label class="flbl">Bank</label><input class="finp" placeholder="Bank name" value="${esc(fd.obank || '')}" oninput="APP.formData.obank=this.value"></div>
+    <div><label class="flbl">Amount (₹)</label><input class="finp" type="number" inputmode="numeric" placeholder="Amount" value="${esc(fd.oamount || '')}" oninput="APP.formData.oamount=this.value.replace(/[^0-9.]/g,'')"></div>
+    <div><label class="flbl">Online (App)</label>
+      <select class="finp" onchange="APP.formData.oonline=this.value;APP.render()">
+        <option value="" ${!app ? 'selected' : ''} disabled>Select app</option>
+        ${APPS.map(a => `<option value="${a}" ${app === a ? 'selected' : ''}>${a}</option>`).join('')}
+      </select>
+    </div>
+    ${app === 'Other App' ? `<div><label class="flbl">App Name</label><input class="finp" placeholder="App name" value="${esc(fd.oonlineOther || '')}" oninput="APP.formData.oonlineOther=this.value"></div>` : ''}
+    <div><label class="flbl">Payment Details</label><input class="finp" placeholder="Reference / transaction details" value="${esc(fd.opaydetails || '')}" oninput="APP.formData.opaydetails=this.value"></div>
+    <div><label class="flbl">Staff ID</label><input class="finp" placeholder="Staff ID" value="${esc(fd.ostaffid || '')}" oninput="APP.formData.ostaffid=this.value"></div>
+  </div>
+  <div class="flex gap-3">
+    <button onclick="APP.saveOnline()" class="fbtn fbtn-primary flex-1 justify-center" style="background:linear-gradient(135deg,#0ea5e9,#0284c7)">✓ Save</button>
+    <button onclick="APP.showForm=false;APP.editingId=null;APP.formData={};APP.render()" class="fbtn fbtn-cancel flex-1 justify-center">✕ Cancel</button>
+  </div>
+</div>`;
+    }
+    const { list, total, pages } = this._page('online');
+    return `
+<div class="flex flex-wrap items-center gap-3 mb-4">
+  <button onclick="APP.formType='online';APP.showForm=true;APP.editingId=null;APP.formData={};APP.render()" class="fbtn" style="background:#0ea5e9;color:#fff">${ico('plus')} Add Online Detail</button>
+  ${this._searchBar('online', 'Search company, bank, app, staff…', '#0ea5e9')}
+  <span class="text-xs text-gray-400 font-medium">${total} record${total !== 1 ? 's' : ''}</span>
+</div>
+${!total ? `<div class="text-center py-16 text-gray-400 text-sm">${(this.search.online || this.dateFrom.online || this.dateTo.online) ? 'No online details match.' : 'No online details yet.'}</div>` :
+        `<div class="grid-auto">
+${list.map(o => `
+<div class="card p-4" style="border-left:4px solid #0ea5e9">
+  <div class="flex items-start justify-between gap-2">
+    <div class="min-w-0">
+      <div class="flex items-center gap-1.5 flex-wrap">
+        <p class="font-bold text-gray-900 truncate">${esc(o.company || '—')}</p>
+        ${o.onlineApp ? `<span class="text-xs font-semibold px-1.5 py-0.5 rounded flex-shrink-0" style="background:#e0f2fe;color:#0369a1">${esc(o.onlineApp)}</span>` : ''}
+      </div>
+      <p class="text-lg font-black text-green-600 mt-0.5">₹${esc(Number(o.amount || 0).toLocaleString('en-IN'))}</p>
+      <p class="text-xs text-gray-500 mt-0.5">${o.bank ? '🏦 ' + esc(o.bank) + (o.date ? ' · ' : '') : ''}${o.date ? '📅 ' + esc(o.date) : ''}</p>
+      ${o.paymentDetails ? `<p class="text-xs text-gray-400 mt-0.5 truncate">${esc(o.paymentDetails)}</p>` : ''}
+      ${o.staffId ? `<p class="text-xs text-gray-400 mt-0.5">Staff ID: ${esc(o.staffId)}</p>` : ''}
+    </div>
+    <div class="flex flex-col gap-1.5 flex-shrink-0">
+      <button onclick="APP.editOnline('${o.id}')" class="fbtn text-xs" style="background:#fef3c7;color:#92400e;border:none">${ico('edit', 'w-3 h-3')} Edit</button>
+      <button onclick="APP.deleteOnline('${o.id}')" class="fbtn text-xs" style="background:#fef2f2;color:#dc2626;border:none">${ico('trash', 'w-3 h-3')} Delete</button>
+    </div>
+  </div>
+</div>`).join('')}
+</div>${this._pager('online', total, pages)}`}`;
+  }
+
   /* ════ DASHBOARD ════ */
   _rDashboard() {
     const totalAmount = this.bills.reduce((sum, b) => sum + (Number(b.totalAmount) || 0), 0);
@@ -1383,7 +1546,7 @@ class App {
   }
 
   _navBtns() {
-    return [['dashboard', 'Dashboard', null, '#6366f1'], ['patients', 'Patients', this.patients.length, '#3b82f6'], ['staff', 'Staff', this.staff.length, '#10b981'], ['bills', 'Bills', this.bills.length, '#7c3aed']].map(([k, l, cnt, c]) => `
+    return [['dashboard', 'Dashboard', null, '#6366f1'], ['patients', 'Patients', this.patients.length, '#3b82f6'], ['staff', 'Staff', this.staff.length, '#10b981'], ['online', 'Online Details', this.online.length, '#0ea5e9'], ['bills', 'Bills', this.bills.length, '#7c3aed']].map(([k, l, cnt, c]) => `
 <button onclick="APP.setTab('${k}')" class="nav-btn${this.tab === k ? ' active' : ''}" style="${this.tab === k ? `background:${c};color:#fff;box-shadow:0 6px 16px ${c}55` : ''}">
   <span class="nav-btn-ic" style="background:${this.tab === k ? 'rgba(255,255,255,.22)' : c + '1a'};color:${this.tab === k ? '#fff' : c}">${I[k]}</span>
   <span>${l}</span>

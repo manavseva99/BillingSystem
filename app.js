@@ -257,8 +257,8 @@ function askCopies() {
     ov.innerHTML = `
 <div id="dlg-card">
   <h3>Print Copies</h3>
-  <p>How many copies do you want to print on this page? (1 to 4)</p>
-  <input id="dlg-input" type="number" min="1" max="4" value="1" inputmode="numeric">
+  <p>How many copies do you want? (2 bills fit on each A4 sheet)</p>
+  <input id="dlg-input" type="number" min="1" max="20" value="2" inputmode="numeric">
   <div id="dlg-actions">
     <button class="dlg-btn cancel" id="dlg-cancel">Cancel</button>
     <button class="dlg-btn ok" id="dlg-ok">OK</button>
@@ -647,7 +647,8 @@ async function doPrint(bills) {
   for (let c = 0; c < n; c++) boxesArr.push(bills.map(b => buildBillHTML(b)).join(''));
 
   const pages = [];
-  for (let i = 0; i < boxesArr.length; i += 4) pages.push(boxesArr.slice(i, i + 4));
+  // Two bills per A4 sheet (stacked). Change 2 -> 4 here (and the CSS grid) for 4-up.
+  for (let i = 0; i < boxesArr.length; i += 2) pages.push(boxesArr.slice(i, i + 2));
 
   const sheet = document.getElementById('print-sheet');
   sheet.innerHTML = pages.map(p => `<div class="p-page">${p.join('')}</div>`).join('');
@@ -668,6 +669,7 @@ async function doPrint(bills) {
    SVG ICONS
 ══════════════════════════════════════════════════════════ */
 const I = {
+  dashboard: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 5a1 1 0 011-1h5a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM13 5a1 1 0 011-1h5a1 1 0 011 1v3a1 1 0 01-1 1h-5a1 1 0 01-1-1V5zM13 13a1 1 0 011-1h5a1 1 0 011 1v6a1 1 0 01-1 1h-5a1 1 0 01-1-1v-6zM4 15a1 1 0 011-1h5a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1v-4z"/></svg>`,
   patients: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/></svg>`,
   staff: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/></svg>`,
   bills: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>`,
@@ -841,7 +843,7 @@ async function pullFromServer(app) {
 ══════════════════════════════════════════════════════════ */
 class App {
   constructor() {
-    this.tab = 'patients';
+    this.tab = 'dashboard';
     this.showForm = false; this.formType = null; this.formData = {};
     this.editingId = null; this.viewId = null; this.billLines = [];
     this.syncStatus = 'idle'; this.printBatch = [];
@@ -849,6 +851,9 @@ class App {
     // search state — plain object, NOT reactive, preserved across renders
     this.search = { patients: '', staff: '', bills: '' };
     this.page = { patients: 0, staff: 0, bills: 0 };
+    // from/to date-range filter per tab (yyyy-mm-dd from <input type=date>)
+    this.dateFrom = { patients: '', staff: '', bills: '' };
+    this.dateTo = { patients: '', staff: '', bills: '' };
     this.loading = true;
     this._boot();
   }
@@ -886,6 +891,11 @@ class App {
   // append the corrected one). Already-clean IDs are left untouched, and it
   // only runs once per device.
   async _migrateIds() {
+    // DISABLED: records now use globally-unique string IDs by design. The old
+    // "renumber messy IDs to sequential 1,2,3" cleanup must never run again —
+    // it would rewrite the unique IDs and reintroduce cross-device collisions.
+    localStorage.setItem('hbm_id_migrated_v1', '1');
+    return;
     if (localStorage.getItem('hbm_id_migrated_v1') === '1') return;
     const isMessy = id => !/^\d{1,6}$/.test(String(id));
     let changed = false;
@@ -933,6 +943,9 @@ class App {
   // duplicate or orphaned rows are left behind. Already-clean IDs are
   // left untouched, and it only runs once per device.
   async _migrateBillIds() {
+    // DISABLED for the same reason as _migrateIds (unique string bill IDs).
+    localStorage.setItem('hbm_bill_id_migrated_v1', '1');
+    return;
     if (localStorage.getItem('hbm_bill_id_migrated_v1') === '1') return;
     const isMessy = id => !/^\d{1,6}$/.test(String(id));
     if (!this.bills.some(r => isMessy(r.id))) {
@@ -977,14 +990,34 @@ class App {
   }
   _filtered(key) {
     const q = (this.search[key] || '').trim();
+    let res;
     // A pure-number query is treated as an ID lookup first — e.g. typing
-    // "5" finds staff/patient #5 (and #50, #51…) without being diluted by
-    // unrelated numeric matches like rate or mobile number digits.
+    // "5" finds staff/patient #5 without being diluted by unrelated numeric
+    // matches like rate or mobile number digits.
     if (q && /^\d+$/.test(q) && (key === 'staff' || key === 'patients')) {
       const byId = this[key].filter(r => String(r.id) === q || String(r.id).startsWith(q));
-      if (byId.length) return byId;
+      res = byId.length ? byId : IDX[key].search(this.search[key], this[key]);
+    } else {
+      res = IDX[key].search(this.search[key], this[key]);
     }
-    return IDX[key].search(this.search[key], this[key]);
+    return this._dateFilter(key, res);
+  }
+  // Restrict a list to records whose date falls within the from/to range.
+  // Uses createdAt (ISO) which every record has.
+  _dateFilter(key, list) {
+    const from = this.dateFrom[key], to = this.dateTo[key];
+    if (!from && !to) return list;
+    const fromT = from ? new Date(from + 'T00:00:00').getTime() : -Infinity;
+    const toT = to ? new Date(to + 'T23:59:59').getTime() : Infinity;
+    return list.filter(r => {
+      const t = new Date(r.createdAt || 0).getTime();
+      return !isNaN(t) && t >= fromT && t <= toT;
+    });
+  }
+  _setDate(key, which, val) {
+    (which === 'from' ? this.dateFrom : this.dateTo)[key] = val;
+    this.page[key] = 0;
+    schedRender();
   }
   _page(key) {
     const f = this._filtered(key);
@@ -1289,12 +1322,13 @@ class App {
 </header>`;
     let body = '';
     if (this.loading) { body = `<div class="grid-auto">${[1, 2, 3, 4, 5, 6].map(() => '<div class="skel rounded-2xl h-28"></div>').join('')}</div>`; }
+    else if (this.tab === 'dashboard') body = this._rDashboard();
     else if (this.tab === 'patients') body = this._rPatients();
     else if (this.tab === 'staff') body = this._rStaff();
     else body = this._rBills();
     const main = `<main class="max-w-7xl mx-auto px-3 sm:px-5 py-5 no-print">${body}</main>`;
     const mnav = `<nav id="mobile-nav" class="no-print" role="navigation">
-  ${[['patients', 'Patients', I.patients], ['staff', 'Staff', I.staff], ['bills', 'Bills', I.bills]].map(([k, l, ic]) => `
+  ${[['dashboard', 'Home', I.dashboard], ['patients', 'Patients', I.patients], ['staff', 'Staff', I.staff], ['bills', 'Bills', I.bills]].map(([k, l, ic]) => `
   <button class="mnav-btn${this.tab === k ? ' active' : ''}" onclick="APP.setTab('${k}')">
     <span style="width:22px;height:22px;display:inline-flex">${ic}</span><span>${l}</span>
   </button>`).join('')}
@@ -1323,12 +1357,37 @@ class App {
     }
   }
 
+  /* ════ DASHBOARD ════ */
+  _rDashboard() {
+    const totalAmount = this.bills.reduce((sum, b) => sum + (Number(b.totalAmount) || 0), 0);
+    const fmtAmt = '₹' + totalAmount.toLocaleString('en-IN');
+    const cards = [
+      { k: 'patients', label: 'Patients', value: this.patients.length, ic: I.patients, g: 'linear-gradient(135deg,#3b82f6,#2563eb)' },
+      { k: 'staff', label: 'Staff', value: this.staff.length, ic: I.staff, g: 'linear-gradient(135deg,#10b981,#0d9488)' },
+      { k: 'bills', label: 'Bills', value: this.bills.length, ic: I.bills, g: 'linear-gradient(135deg,#7c3aed,#6d28d9)' },
+      { k: 'bills', label: 'Total Amount', value: fmtAmt, ic: I.bills, g: 'linear-gradient(135deg,#f59e0b,#d97706)' }
+    ];
+    return `
+<div class="mb-5">
+  <h2 class="text-xl font-black text-gray-800">Dashboard</h2>
+  <p class="text-sm text-gray-400">Overview of Manav Seva Kalyan &amp; Patient Care Centre</p>
+</div>
+<div class="dash-grid">
+  ${cards.map(c => `
+  <button onclick="APP.setTab('${c.k}')" class="dash-card" style="background:${c.g}">
+    <span class="dash-ic">${c.ic}</span>
+    <span class="dash-val">${typeof c.value === 'number' ? c.value : c.value}</span>
+    <span class="dash-label">${c.label}</span>
+  </button>`).join('')}
+</div>`;
+  }
+
   _navBtns() {
-    return [['patients', 'Patients', this.patients.length, '#3b82f6'], ['staff', 'Staff', this.staff.length, '#10b981'], ['bills', 'Bills', this.bills.length, '#7c3aed']].map(([k, l, cnt, c]) => `
+    return [['dashboard', 'Dashboard', null, '#6366f1'], ['patients', 'Patients', this.patients.length, '#3b82f6'], ['staff', 'Staff', this.staff.length, '#10b981'], ['bills', 'Bills', this.bills.length, '#7c3aed']].map(([k, l, cnt, c]) => `
 <button onclick="APP.setTab('${k}')" class="nav-btn${this.tab === k ? ' active' : ''}" style="${this.tab === k ? `background:${c};color:#fff;box-shadow:0 6px 16px ${c}55` : ''}">
   <span class="nav-btn-ic" style="background:${this.tab === k ? 'rgba(255,255,255,.22)' : c + '1a'};color:${this.tab === k ? '#fff' : c}">${I[k]}</span>
   <span>${l}</span>
-  <span class="badge" style="background:${this.tab === k ? 'rgba(255,255,255,.25)' : '#fff'};color:${this.tab === k ? '#fff' : '#64748b'}">${typeof cnt === 'number' ? cnt : cnt}</span>
+  ${cnt === null ? '' : `<span class="badge" style="background:${this.tab === k ? 'rgba(255,255,255,.25)' : '#fff'};color:${this.tab === k ? '#fff' : '#64748b'}">${cnt}</span>`}
 </button>`).join('')
   }
 
@@ -1346,11 +1405,17 @@ class App {
   // KEY FIX: search bar uses oninput with direct value update, never re-sets value from state
   _searchBar(key, ph, accent = '#7c3aed') {
     const q = esc(this.search[key]);
+    const from = esc(this.dateFrom[key] || ''), to = esc(this.dateTo[key] || '');
     return `<div class="search-wrap flex-1 min-w-[180px] max-w-sm">
   <svg class="s-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-4.35-4.35m0 0A7.5 7.5 0 104.5 4.5a7.5 7.5 0 0012.15 12.15z"/></svg>
   <input class="search-inp" id="srch-${key}" placeholder="${ph}" value="${q}"
     oninput="APP._search('${key}',this.value)" autocomplete="off" spellcheck="false">
   <button class="search-clear" onclick="APP._search('${key}','');document.getElementById('srch-${key}').value=''" title="Clear">✕</button>
+</div>
+<div class="date-range flex items-center gap-1.5 text-xs text-gray-500">
+  <label class="flex items-center gap-1">From<input type="date" id="from-${key}" class="date-inp" value="${from}" onchange="APP._setDate('${key}','from',this.value)"></label>
+  <label class="flex items-center gap-1">To<input type="date" id="to-${key}" class="date-inp" value="${to}" onchange="APP._setDate('${key}','to',this.value)"></label>
+  ${(from || to) ? `<button class="text-red-500 font-bold px-1" title="Clear dates" onclick="APP.dateFrom['${key}']='';APP.dateTo['${key}']='';APP.page['${key}']=0;APP.render()">✕</button>` : ''}
 </div>`;
   }
 

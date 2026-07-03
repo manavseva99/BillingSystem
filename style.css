@@ -1133,6 +1133,19 @@ select:focus-visible {
         display: none !important
     }
 
+    /* These are fixed, full-viewport or high z-index overlays. If any of
+       them is still visible (even mid fade-out) when window.print() fires —
+       the copies dialog, a toast, the offline banner, or the login screen —
+       it renders on top of everything else and the printed/saved PDF comes
+       out blank or dark. Force them off unconditionally during print so
+       there's no race with their JS-driven show/hide timers. */
+    #dlg-overlay,
+    #toast-wrap,
+    #offline-banner,
+    #login-screen {
+        display: none !important
+    }
+
     #print-sheet {
         display: block !important
     }
@@ -1197,7 +1210,7 @@ select:focus-visible {
     .b-meta {
         display: flex;
         justify-content: space-between;
-        font-weight: 700;
+        font-weight: 500;
         font-size: 14px;
         margin: 6px 0 4px
     }
@@ -1986,4 +1999,88 @@ body::before {
     border-color: #dc2626;
     background: #fef2f2;
     color: #b91c1c
+}
+
+
+/* ══════════════ LIST PRINT (spreadsheet-style) ══════════════ */
+.print-list-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 12px;
+    font-weight: 800;
+    color: #fff;
+    background: linear-gradient(135deg, #7c3aed, #6d28d9);
+    border: none;
+    padding: 6px 12px;
+    border-radius: 9px;
+    cursor: pointer;
+    box-shadow: 0 4px 12px rgba(124, 58, 237, .28);
+    transition: transform .15s ease, box-shadow .15s ease;
+}
+
+.print-list-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 7px 16px rgba(124, 58, 237, .36)
+}
+
+.print-list-btn:active {
+    transform: translateY(0)
+}
+
+@media print {
+    .print-list {
+        font-family: Arial, sans-serif;
+        color: #000
+    }
+
+    .print-list h2 {
+        font-size: 17px;
+        font-weight: 900;
+        margin: 0 0 2px
+    }
+
+    .print-list .meta {
+        font-size: 10.5px;
+        color: #333;
+        margin-bottom: 10px;
+        font-weight: 600
+    }
+
+    .print-list table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 10.5px
+    }
+
+    .print-list thead {
+        display: table-header-group
+    }
+
+    .print-list th,
+    .print-list td {
+        border: 1px solid #000;
+        padding: 6px 7px;
+        text-align: left;
+        vertical-align: top;
+        word-break: break-word;
+    }
+
+    .print-list th {
+        background: #eee;
+        font-weight: 800;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact
+    }
+
+    .print-list tbody tr {
+        break-inside: avoid;
+        page-break-inside: avoid
+    }
+
+    .print-list .pl-no {
+        text-align: center;
+        color: #555;
+        width: 30px
+    }
 }

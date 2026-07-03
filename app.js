@@ -2,7 +2,7 @@
 /* ══════════════════════════════════════════════════════════
    CONFIG
 ══════════════════════════════════════════════════════════ */
-const GAS_URL = 'https://script.google.com/macros/s/AKfycbyvRE-T1EQJ61oO50EPx9gNAmAa7TgxP6KqQmbz_wsf_LdjMESFLudb42dGTbSeoDOCUg/exec';
+const GAS_URL = 'https://script.google.com/macros/s/AKfycbyOUmx4CMaEE6JiGYtdmk84Ek96Uw0zsWQCTitdEf1JQ7ZBIt0OvhaTaon_2EOQqhn2/exec';
 // Must match API_SECRET in the Apps Script backend exactly, or every
 // request gets rejected as Unauthorized.
 const GAS_SECRET = 'PatientCare9819086415&ManavSeva9920700815';
@@ -168,6 +168,15 @@ const safe = v => (v == null) ? '' : String(v);
 const esc = v => safe(v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 const todayStr = () => new Date().toLocaleDateString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric' });
 const fmtDate = d => { if (!d) return ''; const p = d.split('-'); return p.length === 3 ? `${p[2]}/${p[1]}/${p[0]}` : d };
+// Accept dd/mm/yyyy OR yyyy-mm-dd and always return yyyy-mm-dd (needed to
+// re-populate <input type=date> after pulling dd/mm/yyyy values from sheets).
+function toYmd(v) {
+  if (!v) return '';
+  const s = String(v).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const m = s.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})$/);
+  return m ? `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}` : s;
+}
 const calcDays = (s, e) => { if (!s || !e) return 0; const ms = new Date(e) - new Date(s); return ms < 0 ? 0 : Math.round(ms / 864e5) + 1 };
 const byDate = (a, b) => new Date(b.createdAt) - new Date(a.createdAt);
 // Bill numbers are derived from existing records (not a separate persisted
@@ -568,7 +577,7 @@ const syncDel = (sheet, key, val) => enq({ action: 'delete', sheetName: sheet, d
 const syncOnline = (o, act) => enq({
   action: act, sheetName: 'Online Details', data: {
     ID: o.id,
-    Date: o.date || '',
+    Date: fmtDate(o.date),
     Company: o.company || '',
     Bank: o.bank || '',
     Amount: o.amount || '',
@@ -582,7 +591,7 @@ const syncWorker = (w, act) => enq({
   action: act, sheetName: 'Worker Details', data: {
     ID: w.id,
     StaffName: w.staffName || '',
-    DutyDate: w.dutyDate || '',
+    DutyDate: fmtDate(w.dutyDate),
     StaffMobile: w.staffMobile || '',
     PartyMobile: w.partyMobile || '',
     PartyAddress: w.partyAddress || ''
@@ -593,7 +602,7 @@ function syncBill(b) {
   const sheet = b.center === 'MANAV_SEVA' ? 'Manav Seva Kalyan Bill' : 'Patient Care Centre Bill';
   (b.lines || []).forEach((l, i) => enq({
     action: 'append', sheetName: sheet, data: {
-      ID: b.id,
+      ID: b.serial,
       BillNo: b.billNo,
       Date: b.date,
       Patient: b.patientName,
@@ -609,7 +618,7 @@ function syncBill(b) {
       Amount: l.amount || '',
       Total: i === 0 ? b.totalAmount : '',
       Words: i === 0 ? b.amountInWords : '',
-      Printed: i === 0 ? (b.printed ? 'Yes' : 'No') : ''
+      Printed: i === 0 ? (b.printCount || 0) : ''
     }
   }));
 }
@@ -763,7 +772,7 @@ function mapPatientRow_(r) {
 function mapOnlineRow_(r) {
   return {
     id: String(r.ID || '').trim(),
-    date: r.Date || '',
+    date: toYmd(r.Date),
     company: r.Company || '',
     bank: r.Bank || '',
     amount: r.Amount || '',
@@ -774,12 +783,13 @@ function mapOnlineRow_(r) {
 }
 
 function mapWorkerRow_(r) {
+  const ymd = toYmd(r.DutyDate);
   let created = PULL_FALLBACK_DATE_;
-  if (r.DutyDate) { const dt = new Date(r.DutyDate); if (!isNaN(dt.getTime())) created = dt.toISOString(); }
+  if (ymd) { const dt = new Date(ymd); if (!isNaN(dt.getTime())) created = dt.toISOString(); }
   return {
     id: String(r.ID || '').trim(),
     staffName: r.StaffName || '',
-    dutyDate: r.DutyDate || '',
+    dutyDate: ymd,
     staffMobile: r.StaffMobile || '',
     partyMobile: r.PartyMobile || '',
     partyAddress: r.PartyAddress || '',
@@ -808,20 +818,21 @@ function mapStaffRow_(r) {
 function mapBillRows_(rows, center) {
   const byId = new Map();
   (rows || []).forEach(r => {
-    const id = String(r.ID || '').trim();
-    if (!id) return;
-    if (!byId.has(id)) {
-      byId.set(id, {
-        id, center,
-        billNo: r.BillNo || '', date: r.Date || '', generatedDate: r.Date || '',
+    const billNo = String(r.BillNo || '').trim();
+    const key = billNo || String(r.ID || '').trim();
+    if (!key) return;
+    if (!byId.has(key)) {
+      byId.set(key, {
+        id: key, serial: r.ID || '', center,
+        billNo, date: r.Date || '', generatedDate: r.Date || '',
         patientId: '', patientName: r.Patient || '',
         staffId: '', staffName: r.Staff || '', staffType: r.StaffType || '',
         lines: [], totalAmount: 0, amountInWords: '',
-        printed: String(r.Printed || '').toLowerCase() === 'yes',
+        printCount: Number(String(r.Printed || '').replace(/[^0-9]/g, '')) || 0,
         createdAt: parseDMY_(r.Date) || PULL_FALLBACK_DATE_
       });
     }
-    const b = byId.get(id);
+    const b = byId.get(key);
     b.lines.push({
       no: r.SNo || '', duty: r.Duty || '', shift: r.Shift || '',
       startDate: r.StartDate || '', endDate: r.EndDate || '',
@@ -1436,14 +1447,18 @@ class App {
     const pat = this.patients.find(p => p.id === fd.bpatient);
     const sta = this.staff.find(s => s.id === fd.bstaff);
     const pfx = fd.bcenter === 'MANAV_SEVA' ? 'MSK' : 'PCC';
+    const billNo = nextBillNo(pfx, this.bills);
+    // The sheet's ID column shows a per-centre serial (1,2,3…) so each centre
+    // starts at 1; the record's real key stays the globally-unique BillNo.
+    const serial = parseInt(billNo.slice(pfx.length + 1), 10) || 1;
     const b = {
-      id: String(nextSeqId(this.bills)), center: fd.bcenter,
-      billNo: nextBillNo(pfx, this.bills), date: todayStr(), generatedDate: todayStr(),
+      id: billNo, serial, center: fd.bcenter,
+      billNo, date: todayStr(), generatedDate: todayStr(),
       patientId: fd.bpatient, patientName: pat ? pat.name : '', patientAddress: pat ? pat.address || '' : '',
       staffId: fd.bstaff, staffName: sta ? sta.name : '', staffType: sta ? sta.type : '',
       lines: JSON.parse(JSON.stringify(this.billLines)),
       totalAmount: total, amountInWords: n2w(total),
-      printed: false,
+      printCount: 0,
       createdAt: new Date().toISOString()
     };
     this.bills.unshift(b); IDX.bills.add(b);
@@ -1463,11 +1478,11 @@ class App {
   // Mark a bill as printed (once), persist locally, and sync the flag up so
   // the dashboard's "Bills Printed" count is correct across devices.
   _markBillPrinted(b) {
-    if (!b || b.printed) return;
-    b.printed = true;
+    if (!b) return;
+    b.printCount = (b.printCount || 0) + 1;
     this._save('bills', b);
     const sheet = b.center === 'MANAV_SEVA' ? 'Manav Seva Kalyan Bill' : 'Patient Care Centre Bill';
-    enq({ action: 'update', sheetName: sheet, data: { ID: b.id, Printed: 'Yes' } });
+    enq({ action: 'update', sheetName: sheet, data: { ID: b.serial, Printed: b.printCount } });
   }
   viewBill(id) { this.viewId = id; this.render() }
   toggleBatch(id) {
@@ -1583,7 +1598,7 @@ ${list.map(w => `
   <div class="flex items-start justify-between gap-2">
     <div class="min-w-0">
       <p class="font-bold text-gray-900 truncate">${esc(w.staffName || '—')}</p>
-      ${w.dutyDate ? `<p class="text-xs text-gray-500 mt-0.5">📅 Duty: ${esc(w.dutyDate)}</p>` : ''}
+      ${w.dutyDate ? `<p class="text-xs text-gray-500 mt-0.5">📅 Duty: ${esc(fmtDate(w.dutyDate))}</p>` : ''}
       ${w.staffMobile ? `<p class="text-xs text-gray-600 mt-0.5">📞 Staff: ${esc(w.staffMobile)}</p>` : ''}
       ${w.partyMobile ? `<p class="text-xs text-gray-600 mt-0.5">📞 Party: ${esc(w.partyMobile)}</p>` : ''}
       ${w.partyAddress ? `<p class="text-xs text-gray-400 mt-0.5">📍 ${esc(w.partyAddress)}</p>` : ''}
@@ -1652,7 +1667,7 @@ ${list.map(o => `
         ${o.onlineApp ? `<span class="text-xs font-semibold px-1.5 py-0.5 rounded flex-shrink-0" style="background:#e0f2fe;color:#0369a1">${esc(o.onlineApp)}</span>` : ''}
       </div>
       <p class="text-lg font-black text-green-600 mt-0.5">₹${esc(Number(o.amount || 0).toLocaleString('en-IN'))}</p>
-      <p class="text-xs text-gray-500 mt-0.5">${o.bank ? '🏦 ' + esc(o.bank) + (o.date ? ' · ' : '') : ''}${o.date ? '📅 ' + esc(o.date) : ''}</p>
+      <p class="text-xs text-gray-500 mt-0.5">${o.bank ? '🏦 ' + esc(o.bank) + (o.date ? ' · ' : '') : ''}${o.date ? '📅 ' + esc(fmtDate(o.date)) : ''}</p>
       ${o.paymentDetails ? `<p class="text-xs text-gray-400 mt-0.5 truncate">${esc(o.paymentDetails)}</p>` : ''}
     </div>
     <div class="flex flex-col gap-1.5 flex-shrink-0">
@@ -1672,7 +1687,7 @@ ${list.map(o => `
       { k: 'patients', label: 'Patients', value: this.patients.length, ic: I.patients, g: 'linear-gradient(135deg,#3b82f6,#2563eb)' },
       { k: 'staff', label: 'Staff', value: this.staff.length, ic: I.staff, g: 'linear-gradient(135deg,#10b981,#0d9488)' },
       { k: 'bills', label: 'Bills Generated', value: this.bills.length, ic: I.bills, g: 'linear-gradient(135deg,#7c3aed,#6d28d9)' },
-      { k: 'bills', label: 'Bills Printed', value: this.bills.filter(b => b.printed).length, ic: I.print, g: 'linear-gradient(135deg,#8b5cf6,#7c3aed)' },
+      { k: 'bills', label: 'Bills Printed', value: this.bills.filter(b => (b.printCount || 0) > 0).length, ic: I.print, g: 'linear-gradient(135deg,#8b5cf6,#7c3aed)' },
       { k: 'online', label: 'Online Details', value: this.online.length, ic: I.online, g: 'linear-gradient(135deg,#0ea5e9,#0284c7)' },
       { k: 'worker', label: 'Worker Details', value: this.worker.length, ic: I.worker, g: 'linear-gradient(135deg,#f43f5e,#e11d48)' },
       { k: 'bills', label: 'Total Amount', value: fmtAmt, ic: I.bills, g: 'linear-gradient(135deg,#f59e0b,#d97706)' }
@@ -1689,6 +1704,26 @@ ${list.map(o => `
     <span class="dash-val">${typeof c.value === 'number' ? c.value : c.value}</span>
     <span class="dash-label">${c.label}</span>
   </button>`).join('')}
+</div>
+${this._dashBillBreakdown()}`;
+  }
+
+  // Under the cards: exactly which bills were generated, and which were
+  // printed and how many times each.
+  _dashBillBreakdown() {
+    const gen = this.bills.slice().sort((a, b) => String(a.billNo).localeCompare(String(b.billNo)));
+    const printed = gen.filter(b => (b.printCount || 0) > 0);
+    const chip = (label, extra = '') => `<span class="dash-chip${extra ? ' dash-chip-print' : ''}">${esc(label)}${extra}</span>`;
+    return `
+<div class="dash-detail">
+  <div class="dash-detail-card">
+    <h4>${ico('bills', 'w-4 h-4')} Bills Generated <span class="dash-detail-n">${gen.length}</span></h4>
+    <div class="dash-chips">${gen.length ? gen.map(b => chip(b.billNo)).join('') : '<span class="dash-empty">No bills generated yet.</span>'}</div>
+  </div>
+  <div class="dash-detail-card">
+    <h4>${ico('print', 'w-4 h-4')} Bills Printed <span class="dash-detail-n">${printed.length}</span></h4>
+    <div class="dash-chips">${printed.length ? printed.map(b => chip(b.billNo, ` <b>×${b.printCount}</b>`)).join('') : '<span class="dash-empty">No bills printed yet.</span>'}</div>
+  </div>
 </div>`;
   }
 

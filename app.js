@@ -709,6 +709,13 @@ async function doPrint(bills) {
   // the freshly-injected content is laid out first.
   await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
   window.print();
+  // Only NOW (the copies dialog was confirmed and the print flow has run) do
+  // we count these bills as printed — cancelling the copies dialog above
+  // returns early and never reaches here, so nothing is marked.
+  if (window.APP && Array.isArray(bills)) {
+    bills.forEach(b => APP._markBillPrinted(b));
+    APP.render();
+  }
 }
 
 /* ══════════════════════════════════════════════════════════
@@ -1436,7 +1443,7 @@ class App {
   }
   removeLine(i) { this.billLines.splice(i, 1); this.render() }
   async saveBillOnly() { const b = await this._billHTML(); if (!b) return; toast(`Bill ${b.billNo} saved — ₹${Number(b.totalAmount).toLocaleString('en-IN')}`, 'success', 4000); this.billLines = []; this.formData = {}; this.showForm = false; this.render() }
-  async saveBillAndPrint() { const b = await this._billHTML(); if (!b) return; this._markBillPrinted(b); toast(`Bill ${b.billNo} generated`, 'success', 4000); this.billLines = []; this.formData = {}; this.showForm = false; this.render(); setTimeout(() => doPrint([b]), 350) }
+  async saveBillAndPrint() { const b = await this._billHTML(); if (!b) return; toast(`Bill ${b.billNo} generated`, 'success', 4000); this.billLines = []; this.formData = {}; this.showForm = false; this.render(); setTimeout(() => doPrint([b]), 350) }
   async _billHTML() {
     const fd = this.formData;
     if (!fd.bcenter) { toast('Select a centre', 'error'); return null }
@@ -1474,7 +1481,7 @@ class App {
     if (b) syncDel(b.center === 'MANAV_SEVA' ? 'Manav Seva Kalyan Bill' : 'Patient Care Centre Bill', 'BillNo', b.billNo);
     this.render(); toast('Bill deleted', 'info');
   }
-  printBill(id) { const b = this.bills.find(x => x.id === id); if (!b) { toast('Bill not found', 'error'); return } this._markBillPrinted(b); this.render(); doPrint([b]) }
+  printBill(id) { const b = this.bills.find(x => x.id === id); if (!b) { toast('Bill not found', 'error'); return } doPrint([b]) }
   // Mark a bill as printed (once), persist locally, and sync the flag up so
   // the dashboard's "Bills Printed" count is correct across devices.
   _markBillPrinted(b) {
@@ -1584,6 +1591,26 @@ class App {
   </div>
 </div>`;
     }
+    if (this.viewId && !this.showForm) {
+      const w = this.worker.find(x => x.id === this.viewId);
+      if (!w) { this.viewId = null; return this._rWorker() }
+      const row = (label, val) => val ? `<div class="flex justify-between gap-3 py-2 border-b border-gray-50"><span class="text-xs font-bold text-gray-400">${label}</span><span class="text-sm text-gray-800 text-right break-words">${esc(val)}</span></div>` : '';
+      return `
+<button onclick="APP.viewId=null;APP.render()" class="fbtn fbtn-cancel mb-4 text-sm">${ico('back')} Back</button>
+<div class="bg-white rounded-2xl shadow-sm border border-gray-100 p-5 w-full max-w-lg mx-auto">
+  <div class="flex items-start justify-between mb-3">
+    <div class="flex items-center gap-1.5"><h2 class="font-black text-xl">${esc(w.staffName || '—')}</h2><span class="text-xs font-bold px-2 py-0.5 rounded" style="background:#ffe4e6;color:#be123c">Worker</span></div>
+    <div class="flex gap-2 flex-shrink-0">
+      <button onclick="APP.editWorker('${w.id}')" class="fbtn text-sm" style="background:#fef3c7;color:#92400e;border:none">${ico('edit', 'w-3.5 h-3.5')} Edit</button>
+      <button onclick="APP.deleteWorker('${w.id}')" class="fbtn text-sm" style="background:#fef2f2;color:#dc2626;border:none">${ico('trash', 'w-3.5 h-3.5')} Delete</button>
+    </div>
+  </div>
+  ${row('Duty Date', fmtDate(w.dutyDate || ''))}
+  ${row('Staff Mobile No.', w.staffMobile)}
+  ${row('Party Mobile No.', w.partyMobile)}
+  ${row('Party Address', w.partyAddress)}
+</div>`;
+    }
     const { list, total, pages } = this._page('worker');
     return `
 <div class="flex flex-wrap items-center gap-3 mb-4">
@@ -1594,7 +1621,7 @@ class App {
 ${!total ? `<div class="text-center py-16 text-gray-400 text-sm">${(this.search.worker || this.dateFrom.worker || this.dateTo.worker) ? 'No worker details match.' : 'No worker details yet.'}</div>` :
         `<div class="grid-auto">
 ${list.map(w => `
-<div class="card p-4" style="border-left:4px solid #f43f5e">
+<div class="card p-4 cursor-pointer" style="border-left:4px solid #f43f5e" onclick="APP.viewId='${w.id}';APP.render()">
   <div class="flex items-start justify-between gap-2">
     <div class="min-w-0">
       <p class="font-bold text-gray-900 truncate">${esc(w.staffName || '—')}</p>
@@ -1604,8 +1631,8 @@ ${list.map(w => `
       ${w.partyAddress ? `<p class="text-xs text-gray-400 mt-0.5">📍 ${esc(w.partyAddress)}</p>` : ''}
     </div>
     <div class="flex flex-col gap-1.5 flex-shrink-0">
-      <button onclick="APP.editWorker('${w.id}')" class="fbtn text-xs" style="background:#fef3c7;color:#92400e;border:none">${ico('edit', 'w-3 h-3')} Edit</button>
-      <button onclick="APP.deleteWorker('${w.id}')" class="fbtn text-xs" style="background:#fef2f2;color:#dc2626;border:none">${ico('trash', 'w-3 h-3')} Delete</button>
+      <button onclick="event.stopPropagation();APP.editWorker('${w.id}')" class="fbtn text-xs" style="background:#fef3c7;color:#92400e;border:none">${ico('edit', 'w-3 h-3')} Edit</button>
+      <button onclick="event.stopPropagation();APP.deleteWorker('${w.id}')" class="fbtn text-xs" style="background:#fef2f2;color:#dc2626;border:none">${ico('trash', 'w-3 h-3')} Delete</button>
     </div>
   </div>
 </div>`).join('')}
@@ -1649,6 +1676,31 @@ ${list.map(w => `
   </div>
 </div>`;
     }
+    if (this.viewId && !this.showForm) {
+      const o = this.online.find(x => x.id === this.viewId);
+      if (!o) { this.viewId = null; return this._rOnline() }
+      const row = (label, val) => val ? `<div class="flex justify-between gap-3 py-2 border-b border-gray-50"><span class="text-xs font-bold text-gray-400">${label}</span><span class="text-sm text-gray-800 text-right break-words">${esc(val)}</span></div>` : '';
+      return `
+<button onclick="APP.viewId=null;APP.render()" class="fbtn fbtn-cancel mb-4 text-sm">${ico('back')} Back</button>
+<div class="bg-white rounded-2xl shadow-sm border border-gray-100 p-5 w-full max-w-lg mx-auto">
+  <div class="flex items-start justify-between mb-3">
+    <div class="min-w-0">
+      <div class="flex items-center gap-1.5 flex-wrap"><h2 class="font-black text-xl">${esc(o.company || '—')}</h2>${o.onlineApp ? `<span class="text-xs font-bold px-2 py-0.5 rounded" style="background:#e0f2fe;color:#0369a1">${esc(o.onlineApp)}</span>` : ''}</div>
+      <p class="text-2xl font-black text-green-600 mt-1">₹${esc(Number(o.amount || 0).toLocaleString('en-IN'))}</p>
+    </div>
+    <div class="flex gap-2 flex-shrink-0">
+      <button onclick="APP.editOnline('${o.id}')" class="fbtn text-sm" style="background:#fef3c7;color:#92400e;border:none">${ico('edit', 'w-3.5 h-3.5')} Edit</button>
+      <button onclick="APP.deleteOnline('${o.id}')" class="fbtn text-sm" style="background:#fef2f2;color:#dc2626;border:none">${ico('trash', 'w-3.5 h-3.5')} Delete</button>
+    </div>
+  </div>
+  ${row('Date', fmtDate(o.date || ''))}
+  ${row('Company', o.company)}
+  ${row('Bank', o.bank)}
+  ${row('Amount', o.amount ? '₹' + Number(o.amount).toLocaleString('en-IN') : '')}
+  ${row('Online App', o.onlineApp)}
+  ${row('Payment Details', o.paymentDetails)}
+</div>`;
+    }
     const { list, total, pages } = this._page('online');
     return `
 <div class="flex flex-wrap items-center gap-3 mb-4">
@@ -1659,7 +1711,7 @@ ${list.map(w => `
 ${!total ? `<div class="text-center py-16 text-gray-400 text-sm">${(this.search.online || this.dateFrom.online || this.dateTo.online) ? 'No online details match.' : 'No online details yet.'}</div>` :
         `<div class="grid-auto">
 ${list.map(o => `
-<div class="card p-4" style="border-left:4px solid #0ea5e9">
+<div class="card p-4 cursor-pointer" style="border-left:4px solid #0ea5e9" onclick="APP.viewId='${o.id}';APP.render()">
   <div class="flex items-start justify-between gap-2">
     <div class="min-w-0">
       <div class="flex items-center gap-1.5 flex-wrap">
@@ -1671,8 +1723,8 @@ ${list.map(o => `
       ${o.paymentDetails ? `<p class="text-xs text-gray-400 mt-0.5 truncate">${esc(o.paymentDetails)}</p>` : ''}
     </div>
     <div class="flex flex-col gap-1.5 flex-shrink-0">
-      <button onclick="APP.editOnline('${o.id}')" class="fbtn text-xs" style="background:#fef3c7;color:#92400e;border:none">${ico('edit', 'w-3 h-3')} Edit</button>
-      <button onclick="APP.deleteOnline('${o.id}')" class="fbtn text-xs" style="background:#fef2f2;color:#dc2626;border:none">${ico('trash', 'w-3 h-3')} Delete</button>
+      <button onclick="event.stopPropagation();APP.editOnline('${o.id}')" class="fbtn text-xs" style="background:#fef3c7;color:#92400e;border:none">${ico('edit', 'w-3 h-3')} Edit</button>
+      <button onclick="event.stopPropagation();APP.deleteOnline('${o.id}')" class="fbtn text-xs" style="background:#fef2f2;color:#dc2626;border:none">${ico('trash', 'w-3 h-3')} Delete</button>
     </div>
   </div>
 </div>`).join('')}
@@ -1683,11 +1735,17 @@ ${list.map(o => `
   _rDashboard() {
     const totalAmount = this.bills.reduce((sum, b) => sum + (Number(b.totalAmount) || 0), 0);
     const fmtAmt = '₹' + totalAmount.toLocaleString('en-IN');
+    const sortedBills = this.bills.slice().sort((a, b) => String(a.billNo).localeCompare(String(b.billNo)));
+    const genChips = sortedBills.length
+      ? `<div class="dash-card-chips">${sortedBills.map(b => `<span>${esc(b.billNo)}</span>`).join('')}</div>` : '';
+    const printedBills = sortedBills.filter(b => (b.printCount || 0) > 0);
+    const printChips = printedBills.length
+      ? `<div class="dash-card-chips">${printedBills.map(b => `<span>${esc(b.billNo)} ×${b.printCount}</span>`).join('')}</div>` : '';
     const cards = [
       { k: 'patients', label: 'Patients', value: this.patients.length, ic: I.patients, g: 'linear-gradient(135deg,#3b82f6,#2563eb)' },
       { k: 'staff', label: 'Staff', value: this.staff.length, ic: I.staff, g: 'linear-gradient(135deg,#10b981,#0d9488)' },
-      { k: 'bills', label: 'Bills Generated', value: this.bills.length, ic: I.bills, g: 'linear-gradient(135deg,#7c3aed,#6d28d9)' },
-      { k: 'bills', label: 'Bills Printed', value: this.bills.filter(b => (b.printCount || 0) > 0).length, ic: I.print, g: 'linear-gradient(135deg,#8b5cf6,#7c3aed)' },
+      { k: 'bills', label: 'Bills Generated', value: this.bills.length, ic: I.bills, g: 'linear-gradient(135deg,#7c3aed,#6d28d9)', detail: genChips },
+      { k: 'bills', label: 'Bills Printed', value: this.bills.filter(b => (b.printCount || 0) > 0).length, ic: I.print, g: 'linear-gradient(135deg,#8b5cf6,#7c3aed)', detail: printChips },
       { k: 'online', label: 'Online Details', value: this.online.length, ic: I.online, g: 'linear-gradient(135deg,#0ea5e9,#0284c7)' },
       { k: 'worker', label: 'Worker Details', value: this.worker.length, ic: I.worker, g: 'linear-gradient(135deg,#f43f5e,#e11d48)' },
       { k: 'bills', label: 'Total Amount', value: fmtAmt, ic: I.bills, g: 'linear-gradient(135deg,#f59e0b,#d97706)' }
@@ -1699,31 +1757,12 @@ ${list.map(o => `
 </div>
 <div class="dash-grid">
   ${cards.map(c => `
-  <button onclick="APP.setTab('${c.k}')" class="dash-card" style="background:${c.g}">
+  <button onclick="APP.setTab('${c.k}')" class="dash-card${c.detail ? ' dash-card-wide' : ''}" style="background:${c.g}">
     <span class="dash-ic">${c.ic}</span>
     <span class="dash-val">${typeof c.value === 'number' ? c.value : c.value}</span>
     <span class="dash-label">${c.label}</span>
+    ${c.detail || ''}
   </button>`).join('')}
-</div>
-${this._dashBillBreakdown()}`;
-  }
-
-  // Under the cards: exactly which bills were generated, and which were
-  // printed and how many times each.
-  _dashBillBreakdown() {
-    const gen = this.bills.slice().sort((a, b) => String(a.billNo).localeCompare(String(b.billNo)));
-    const printed = gen.filter(b => (b.printCount || 0) > 0);
-    const chip = (label, extra = '') => `<span class="dash-chip${extra ? ' dash-chip-print' : ''}">${esc(label)}${extra}</span>`;
-    return `
-<div class="dash-detail">
-  <div class="dash-detail-card">
-    <h4>${ico('bills', 'w-4 h-4')} Bills Generated <span class="dash-detail-n">${gen.length}</span></h4>
-    <div class="dash-chips">${gen.length ? gen.map(b => chip(b.billNo)).join('') : '<span class="dash-empty">No bills generated yet.</span>'}</div>
-  </div>
-  <div class="dash-detail-card">
-    <h4>${ico('print', 'w-4 h-4')} Bills Printed <span class="dash-detail-n">${printed.length}</span></h4>
-    <div class="dash-chips">${printed.length ? printed.map(b => chip(b.billNo, ` <b>×${b.printCount}</b>`)).join('') : '<span class="dash-empty">No bills printed yet.</span>'}</div>
-  </div>
 </div>`;
   }
 

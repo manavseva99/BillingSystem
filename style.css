@@ -1114,7 +1114,7 @@ select:focus-visible {
 @media print {
     @page {
         size: A4 portrait;
-        margin: 0
+        margin: 10mm
     }
 
     body {
@@ -1139,19 +1139,15 @@ select:focus-visible {
 
     /* Each printed page is a strict 2x2 grid of A6 cells (105mm x 148.5mm)
                which together fill an A4 sheet (210mm x 297mm) exactly. */
+    /* One sheet = up to 2 bills stacked. No fixed height / no overflow:hidden
+       so nothing is ever clipped; each bill is kept whole with
+       break-inside:avoid and a min-height so the two of them fill the page. */
     .p-page {
-        width: 210mm;
-        /* Height grows with content via grid-auto-rows instead of a fixed
-           297mm. A single bill is now ~148.5mm tall, so it no longer
-           overflows onto a blank 2nd page on mobile browsers (which ignore
-           @page margin:0 and force their own margins). 4 bills still fill a
-           full A4 as a 2x2 grid. */
-        display: grid;
-        grid-template-columns: 210mm;
-        grid-auto-rows: 148.5mm;
+        display: flex;
+        flex-direction: column;
+        gap: 8mm;
         page-break-after: always;
         break-after: page;
-        overflow: hidden;
     }
 
     .p-page:last-child {
@@ -1175,10 +1171,12 @@ select:focus-visible {
             } */
 
     .bill-box {
-        margin: 4px 3.5px 0 4px;
         position: relative;
+        box-sizing: border-box;
+        width: 100%;
+        min-height: 128mm;
         border: 1.8px solid #111;
-        padding: 7px 9px;
+        padding: 10px 12px;
         page-break-inside: avoid;
         break-inside: avoid;
         font-family: Arial, sans-serif;
@@ -1287,7 +1285,7 @@ select:focus-visible {
         padding-top: 4px;
         padding-bottom: 3.5px;
         margin-top: auto;
-        margin-bottom: 50px;
+        margin-bottom: 6px;
         font-size: 9px;
         gap: 9px
     }
@@ -1720,70 +1718,35 @@ body::before {
 }
 
 
-/* ══════════════ DASHBOARD BILL BREAKDOWN ══════════════ */
-.dash-detail {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-    gap: 16px;
-    margin-top: 18px;
+
+
+
+/* ══════════════ DASHBOARD IN-CARD BILL LISTS ══════════════ */
+.dash-card-wide {
+    grid-column: span 2
 }
 
-.dash-detail-card {
-    background: #fff;
-    border: 1px solid #eef2f7;
-    border-radius: 16px;
-    padding: 16px 18px;
-    box-shadow: 0 6px 18px rgba(30, 27, 75, .06);
+@media (max-width: 640px) {
+    .dash-card-wide {
+        grid-column: span 1
+    }
 }
 
-.dash-detail-card h4 {
-    display: flex;
-    align-items: center;
-    gap: 7px;
-    font-size: 13px;
-    font-weight: 800;
-    color: #334155;
-    margin: 0 0 12px;
-}
-
-.dash-detail-n {
-    margin-left: auto;
-    background: #f1f5f9;
-    color: #64748b;
-    font-size: 12px;
-    font-weight: 800;
-    padding: 2px 9px;
-    border-radius: 999px;
-}
-
-.dash-chips {
+.dash-card-chips {
     display: flex;
     flex-wrap: wrap;
-    gap: 7px
+    gap: 5px;
+    margin-top: 10px;
+    max-height: 74px;
+    overflow: auto;
 }
 
-.dash-chip {
-    font-size: 12px;
-    font-weight: 700;
-    color: #4338ca;
-    background: #eef2ff;
-    border: 1px solid #e0e7ff;
-    padding: 4px 10px;
-    border-radius: 8px;
-}
-
-.dash-chip-print {
-    color: #6d28d9;
-    background: #f5f3ff;
-    border-color: #ede9fe
-}
-
-.dash-chip b {
-    color: #059669;
-    font-weight: 800
-}
-
-.dash-empty {
-    font-size: 12px;
-    color: #94a3b8
+.dash-card-chips span {
+    font-size: 11px;
+    font-weight: 800;
+    color: #fff;
+    background: rgba(255, 255, 255, .22);
+    padding: 3px 9px;
+    border-radius: 7px;
+    white-space: nowrap;
 }

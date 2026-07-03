@@ -1137,11 +1137,6 @@ select:focus-visible {
         display: block !important
     }
 
-    /* Each printed page is a strict 2x2 grid of A6 cells (105mm x 148.5mm)
-               which together fill an A4 sheet (210mm x 297mm) exactly. */
-    /* One sheet = up to 2 bills stacked. No fixed height / no overflow:hidden
-       so nothing is ever clipped; each bill is kept whole with
-       break-inside:avoid and a min-height so the two of them fill the page. */
     .p-page {
         display: flex;
         flex-direction: column;
@@ -1155,84 +1150,47 @@ select:focus-visible {
         break-after: auto;
     }
 
-    /* .bill-box {
-                width: 105mm;
-                height: 148.5mm;
-                border: 1px solid #000;
-                padding: 7px 10px;
-                page-break-inside: avoid;
-                break-inside: avoid;
-                font-family: Arial, sans-serif;
-                font-size: 9.5px;
-                display: flex;
-                flex-direction: column;
-                box-sizing: border-box;
-                overflow: hidden
-            } */
-
     .bill-box {
         position: relative;
         box-sizing: border-box;
         width: 100%;
-        min-height: 128mm;
-        border: 1.8px solid #111;
-        padding: 10px 12px;
+        min-height: 130mm;
+        border: 1.9px solid #000;
+        padding: 12px 15px;
         page-break-inside: avoid;
         break-inside: avoid;
         font-family: Arial, sans-serif;
-        font-size: 9.5px;
+        font-size: 19px;
+        color: #000;
         display: flex;
         flex-direction: column;
-        margin: auto;
     }
 
     .bh {
         text-align: center;
-        border-bottom: 1.2px solid #111;
-        padding-bottom: 3px;
-        margin-bottom: 3px;
+        border-bottom: 1.5px solid #000;
+        padding-bottom: 4px;
+        margin-bottom: 4px;
         padding-top: 2px;
     }
 
     .bh h1 {
         margin: 0;
-        font-size: 12.5px;
+        font-size: 20px;
         font-weight: 900;
+        letter-spacing: .3px;
         color: #8b0000
     }
 
     .bh h2 {
-        margin: 0;
-        font-size: 11px;
+        margin: 1px 0 0;
+        font-size: 16Wpx;
         font-weight: 800
     }
 
-
-
-    /* .bh {
-                text-align: center;
-                border-bottom: 1.2px solid #111;
-                padding-bottom: 4px;
-                margin-bottom: 4px
-            }
-
-            .bh h1 {
-                margin: 0;
-                font-size: 13px;
-                font-weight: 900;
-                color: #8b0000;
-                letter-spacing: .5px
-            }
-
-            .bh h2 {
-                margin: 0 0 1px;
-                font-size: 11px;
-                font-weight: 800
-            } */
-
     .bh p.addr {
-        margin: 1px 0;
-        font-size: 8.5px;
+        margin: 3px 0 0;
+        font-size: 13px;
         font-weight: 700
     }
 
@@ -1240,31 +1198,31 @@ select:focus-visible {
         display: flex;
         justify-content: space-between;
         font-weight: 700;
-        font-size: 9px;
-        margin-bottom: 3px
+        font-size: 14px;
+        margin: 6px 0 4px
     }
 
     .b-pinfo p {
-        margin: 2px 0;
-        font-size: 9px
+        margin: 3px 0;
+        font-size: 14px
     }
 
     .b-tbl {
         width: 100%;
         border-collapse: collapse;
-        margin: 2px 0;
-        font-size: 8.5px
+        margin: 6px 0;
+        font-size: 12.9px
     }
 
     .b-tbl th,
     .b-tbl td {
-        border: 1px solid #111;
-        padding: 2.5px 3px
+        border: 1.5px solid #000;
+        padding: 5px 5px
     }
 
     .b-tbl th {
         background: #eee;
-        font-weight: 700;
+        font-weight: 760;
         text-align: center
     }
 
@@ -1276,19 +1234,17 @@ select:focus-visible {
         text-align: right
     }
 
-    /* Words LEFT, amount RIGHT — same line, just below table */
     .b-total-row {
         display: flex;
         justify-content: space-between;
         align-items: flex-start;
-        border-top: 1.5px solid #111;
-        border-bottom: 1.5px solid #111;
-        padding-top: 4px;
-        padding-bottom: 3.5px;
+        border-top: 1.5px solid #000;
+        border-bottom: 1.5px solid #000;
+        padding: 6px 2px;
         margin-top: auto;
-        margin-bottom: 6px;
-        font-size: 9px;
-        gap: 9px
+        margin-bottom: 10px;
+        font-size: 11px;
+        gap: 12px
     }
 
     .b-total-row .words {
@@ -1298,33 +1254,44 @@ select:focus-visible {
 
     .b-total-row .amt {
         font-weight: 900;
-        font-size: 11px;
+        font-size: 13.5px;
         white-space: nowrap;
         color: #000
     }
 
-    .b-sig {
+    .b-foot {
         display: flex;
-        justify-content: flex-end;
-        margin-top: 6px;
-        font-size: 9px;
-        text-align: center
-    }
-
-    .b-sig-i {
-        /* border-top: 1px solid #111; */
-        padding-top: 2px;
-        min-width: 1px
-    }
-
-    .b-sig-space {
-        height: 28px
+        justify-content: space-between;
+        align-items: flex-end;
+        margin-top: 8px;
     }
 
     .b-eoe {
-        font-size: 7.5px;
-        margin-top: 2px;
-        color: #555
+        font-size: 10px;
+        font-weight: 700;
+        color: #333;
+    }
+
+    .b-sig-i {
+        text-align: center;
+        min-width: 45mm;
+    }
+
+    .b-sig-space {
+        height: 26px;
+    }
+
+    .b-sig-line {
+        /* border-top: 1.5px solid #000; */
+        padding-top: 3px;
+        font-weight: 700;
+        font-size: 10.5px;
+    }
+
+    .b-sig-co {
+        font-weight: 900;
+        font-size: 11px;
+        margin-top: 1px;
     }
 }
 
@@ -1640,17 +1607,19 @@ body::before {
 /* ══════════════ DASHBOARD CARDS + DATE RANGE ══════════════ */
 .dash-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(168px, 1fr));
     gap: 16px;
+    align-items: stretch;
 }
 
 .dash-card {
     position: relative;
     overflow: hidden;
+    min-width: 0;
     border: none;
     border-radius: 20px;
     padding: 20px 18px;
-    min-height: 132px;
+    min-height: 138px;
     color: #fff;
     text-align: left;
     display: flex;
@@ -1659,6 +1628,15 @@ body::before {
     cursor: pointer;
     box-shadow: 0 12px 30px rgba(30, 27, 75, .18);
     transition: transform .18s ease, box-shadow .18s ease;
+}
+
+.dash-card-static {
+    cursor: default
+}
+
+.dash-card-static:hover {
+    transform: none;
+    box-shadow: 0 12px 30px rgba(30, 27, 75, .18)
 }
 
 .dash-card:hover {
@@ -1687,10 +1665,13 @@ body::before {
 }
 
 .dash-val {
-    font-size: 30px;
+    font-size: clamp(21px, 2vw, 30px);
     font-weight: 900;
-    line-height: 1.05;
-    letter-spacing: -.5px
+    line-height: 1.1;
+    letter-spacing: -.4px;
+    max-width: 100%;
+    overflow-wrap: anywhere;
+    word-break: break-word;
 }
 
 .dash-label {
@@ -1750,4 +1731,259 @@ body::before {
     padding: 3px 9px;
     border-radius: 7px;
     white-space: nowrap;
+}
+
+.dash-bill-chip {
+    cursor: pointer;
+    transition: background .15s ease, transform .15s ease;
+}
+
+.dash-bill-chip:hover {
+    background: rgba(255, 255, 255, .38) !important;
+    transform: translateY(-1px);
+}
+
+.dash-bill-chip:active {
+    transform: translateY(0)
+}
+
+
+/* ══════════════ DASHBOARD BILL POPUP ══════════════ */
+.dm-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, .55);
+    backdrop-filter: blur(2px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 18px;
+    z-index: 1000;
+    animation: dmfade .15s ease;
+}
+
+@keyframes dmfade {
+    from {
+        opacity: 0
+    }
+
+    to {
+        opacity: 1
+    }
+}
+
+.dm-box {
+    background: #fff;
+    width: 100%;
+    max-width: 560px;
+    max-height: 82vh;
+    border-radius: 20px;
+    box-shadow: 0 30px 70px rgba(15, 23, 42, .4);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    animation: dmpop .18s ease;
+}
+
+@keyframes dmpop {
+    from {
+        transform: translateY(12px) scale(.98);
+        opacity: 0
+    }
+
+    to {
+        transform: none;
+        opacity: 1
+    }
+}
+
+.dm-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 20px;
+    border-bottom: 1px solid #eef2f7;
+}
+
+.dm-head h3 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 900;
+    color: #1e293b
+}
+
+.dm-x {
+    border: none;
+    background: #f1f5f9;
+    color: #64748b;
+    width: 30px;
+    height: 30px;
+    border-radius: 9px;
+    font-size: 14px;
+    cursor: pointer;
+    font-weight: 800;
+}
+
+.dm-x:hover {
+    background: #e2e8f0
+}
+
+.dm-body {
+    padding: 8px 14px 14px;
+    overflow-y: auto
+}
+
+.dm-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 11px 8px;
+    border-bottom: 1px solid #f1f5f9;
+    flex-wrap: wrap;
+}
+
+.dm-row:last-child {
+    border-bottom: none
+}
+
+.dm-main {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0
+}
+
+.dm-bno {
+    font-weight: 800;
+    color: #4338ca;
+    font-size: 14px;
+    cursor: pointer;
+    text-decoration: underline;
+    text-decoration-color: #c7d2fe;
+    text-underline-offset: 2px
+}
+
+.dm-bno:hover {
+    color: #6d28d9
+}
+
+.dm-pat {
+    font-size: 12px;
+    color: #64748b
+}
+
+.dm-side {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 3px;
+    text-align: right
+}
+
+.dm-amt {
+    font-weight: 900;
+    color: #059669;
+    font-size: 14px
+}
+
+.dm-when {
+    font-size: 11px;
+    color: #94a3b8;
+    white-space: nowrap
+}
+
+.dm-times {
+    color: #7c3aed;
+    font-size: 13px
+}
+
+.dm-empty {
+    text-align: center;
+    padding: 30px;
+    color: #94a3b8;
+    font-size: 13px
+}
+
+
+/* ══════════════ WORKER DUTY STATUS ══════════════ */
+.duty-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    display: inline-block;
+    flex-shrink: 0;
+}
+
+.duty-dot.on {
+    background: #16a34a;
+    box-shadow: 0 0 0 3px rgba(22, 163, 74, .18)
+}
+
+.duty-dot.off {
+    background: #dc2626;
+    box-shadow: 0 0 0 3px rgba(220, 38, 38, .18)
+}
+
+.duty-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    font-weight: 800;
+    padding: 3px 10px;
+    border-radius: 999px;
+    border: 1px solid transparent;
+    cursor: pointer;
+    transition: filter .15s ease;
+}
+
+.duty-badge:hover {
+    filter: brightness(.97)
+}
+
+.duty-badge.duty-on {
+    background: #dcfce7;
+    color: #15803d;
+    border-color: #bbf7d0
+}
+
+.duty-badge.duty-off {
+    background: #fee2e2;
+    color: #b91c1c;
+    border-color: #fecaca
+}
+
+.duty-toggle {
+    display: flex;
+    gap: 8px
+}
+
+.duty-pill {
+    flex: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    padding: 9px 10px;
+    border-radius: 11px;
+    border: 1.5px solid #e2e8f0;
+    background: #fff;
+    font-size: 13px;
+    font-weight: 700;
+    color: #64748b;
+    cursor: pointer;
+    transition: all .15s ease;
+}
+
+.duty-pill.on-active {
+    border-color: #16a34a;
+    background: #f0fdf4;
+    color: #15803d
+}
+
+.duty-pill.off-active {
+    border-color: #dc2626;
+    background: #fef2f2;
+    color: #b91c1c
 }

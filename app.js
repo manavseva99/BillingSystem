@@ -168,6 +168,15 @@ const safe = v => (v == null) ? '' : String(v);
 const esc = v => safe(v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 const todayStr = () => new Date().toLocaleDateString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric' });
 const fmtDate = d => { if (!d) return ''; const p = d.split('-'); return p.length === 3 ? `${p[2]}/${p[1]}/${p[0]}` : d };
+// Full date + time from an ISO string, e.g. "03/07/2026, 11:44 AM".
+const fmtDateTime = iso => {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return String(iso);
+  const p = n => String(n).padStart(2, '0');
+  let h = d.getHours(); const ap = h < 12 ? 'AM' : 'PM'; h = h % 12 || 12;
+  return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()}, ${p(h)}:${p(d.getMinutes())} ${ap}`;
+};
 // Accept dd/mm/yyyy OR yyyy-mm-dd and always return yyyy-mm-dd (needed to
 // re-populate <input type=date> after pulling dd/mm/yyyy values from sheets).
 function toYmd(v) {
@@ -176,6 +185,12 @@ function toYmd(v) {
   if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
   const m = s.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})$/);
   return m ? `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}` : s;
+}
+// Today as yyyy-mm-dd, local time (not UTC) so it matches <input type=date>.
+function todayYmd() {
+  const d = new Date();
+  const p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
 const calcDays = (s, e) => { if (!s || !e) return 0; const ms = new Date(e) - new Date(s); return ms < 0 ? 0 : Math.round(ms / 864e5) + 1 };
 const byDate = (a, b) => new Date(b.createdAt) - new Date(a.createdAt);
@@ -396,6 +411,68 @@ function confirmDelete(name, type) {
 }
 
 /* ══════════════════════════════════════════════════════════
+   RESTART DUTY DIALOG
+   — Shown when a worker is switched back to On Duty. Asks whether
+   — this new duty period is with the same party as last time, and
+   — if not, collects fresh party details before the period starts.
+══════════════════════════════════════════════════════════ */
+function askDutyRestart(w) {
+  return new Promise((resolve) => {
+    const ov = document.getElementById('dlg-overlay');
+    const close = (val) => {
+      ov.classList.remove('show');
+      setTimeout(() => { ov.style.display = 'none'; ov.innerHTML = ''; }, 180);
+      resolve(val);
+    };
+    const hasPrev = !!(w.partyAddress || w.partyMobile);
+    const step1 = () => {
+      ov.innerHTML = `
+<div id="dlg-card">
+  <h3 style="margin:0 0 .6rem">Resume Duty — ${esc(w.staffName || '')}</h3>
+  <p style="margin:0 0 .8rem;color:#475569;font-size:.9rem">Is this duty starting with the <b>same party</b> as before?</p>
+  <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:10px 12px;margin-bottom:1.1rem;font-size:.85rem;color:#475569;line-height:1.6">
+    ${hasPrev ? `${w.partyAddress ? `📍 ${esc(w.partyAddress)}<br>` : ''}${w.partyMobile ? `📞 ${esc(w.partyMobile)}` : ''}` : `<span style="color:#94a3b8">No previous party info on file.</span>`}
+  </div>
+  <div id="dlg-actions" style="flex-direction:column;gap:.55rem">
+    <button class="dlg-btn ok" id="dlg-same" style="width:100%">✓ Yes, Same Party</button>
+    <button class="dlg-btn cancel" id="dlg-diff" style="width:100%;background:#fff7ed;color:#c2410c;border:1px solid #fed7aa">↻ New Party</button>
+    <button class="dlg-btn cancel" id="dlg-cancel" style="width:100%;background:transparent;color:#94a3b8">Cancel</button>
+  </div>
+</div>`;
+      document.getElementById('dlg-same').onclick = () => close({ reuse: true });
+      document.getElementById('dlg-diff').onclick = () => step2();
+      document.getElementById('dlg-cancel').onclick = () => close(null);
+    };
+    const step2 = () => {
+      ov.innerHTML = `
+<div id="dlg-card">
+  <h3 style="margin:0 0 .8rem">New Party Details</h3>
+  <div class="grid gap-3" style="margin-bottom:1.1rem">
+    <div><label class="flbl">Party Mobile No.</label><input id="dlg-pmobile" class="finp" type="tel" inputmode="numeric" maxlength="10" placeholder="10-digit party number"></div>
+    <div><label class="flbl">Party Address</label><textarea id="dlg-paddress" class="finp" rows="2" placeholder="Party address"></textarea></div>
+  </div>
+  <div id="dlg-actions">
+    <button class="dlg-btn cancel" id="dlg-back">← Back</button>
+    <button class="dlg-btn ok" id="dlg-ok">Start Duty</button>
+  </div>
+</div>`;
+      const pm = document.getElementById('dlg-pmobile');
+      pm.addEventListener('input', function () { this.value = this.value.replace(/[^0-9]/g, '').slice(0, 10); });
+      pm.focus();
+      document.getElementById('dlg-back').onclick = () => step1();
+      document.getElementById('dlg-ok').onclick = () => {
+        const partyMobile = pm.value.trim();
+        const partyAddress = document.getElementById('dlg-paddress').value.trim();
+        close({ reuse: false, partyMobile, partyAddress });
+      };
+    };
+    ov.style.display = 'flex';
+    step1();
+    requestAnimationFrame(() => requestAnimationFrame(() => ov.classList.add('show')));
+  });
+}
+
+/* ══════════════════════════════════════════════════════════
    GOOGLE SHEETS SYNC
    — Persistent offline queue, 3-retry with exponential backoff
    — Uses text/plain to bypass CORS preflight (GAS limitation)
@@ -587,6 +664,9 @@ const syncOnline = (o, act) => enq({
 });
 
 // Worker duty record -> "Worker Details" sheet.
+// History (past on/off duty periods) is stored as a compact JSON string in
+// its own column so it round-trips through the spreadsheet like any other
+// field and survives a pull on another device.
 const syncWorker = (w, act) => enq({
   action: act, sheetName: 'Worker Details', data: {
     ID: w.id,
@@ -594,7 +674,9 @@ const syncWorker = (w, act) => enq({
     DutyDate: fmtDate(w.dutyDate),
     StaffMobile: w.staffMobile || '',
     PartyMobile: w.partyMobile || '',
-    PartyAddress: w.partyAddress || ''
+    PartyAddress: w.partyAddress || '',
+    Status: w.status === 'off' ? 'Off Duty' : 'On Duty',
+    History: JSON.stringify(w.history || [])
   }
 });
 
@@ -618,7 +700,9 @@ function syncBill(b) {
       Amount: l.amount || '',
       Total: i === 0 ? b.totalAmount : '',
       Words: i === 0 ? b.amountInWords : '',
-      Printed: i === 0 ? (b.printCount || 0) : ''
+      Printed: i === 0 ? (b.printCount || 0) : '',
+      CreatedAt: i === 0 ? (b.createdAt || '') : '',
+      PrintedAt: i === 0 ? (b.printedAt || '') : ''
     }
   }));
 }
@@ -673,14 +757,14 @@ function buildBillHTML(bill) {
     <div class="words"><b>Total (In Words):</b> ${esc(words)}</div>
     <div class="amt">TOTAL: &#8377;${total.toLocaleString('en-IN')}</div>
   </div>
-  <div class="b-sig">
+  <div class="b-foot">
+    <div class="b-eoe">E. &amp; O.E.</div>
     <div class="b-sig-i">
       <div class="b-sig-space"></div>
-      <div style="font-weight:700">Authorised Signature</div>
-      <div style="font-weight:900">${foot}</div>
+      <div class="b-sig-line">Authorised Signature</div>
+      <div class="b-sig-co">${foot}</div>
     </div>
   </div>
-  <div class="b-eoe">E. &amp; O.E.</div>
 </div>`;
 }
 async function doPrint(bills) {
@@ -793,6 +877,8 @@ function mapWorkerRow_(r) {
   const ymd = toYmd(r.DutyDate);
   let created = PULL_FALLBACK_DATE_;
   if (ymd) { const dt = new Date(ymd); if (!isNaN(dt.getTime())) created = dt.toISOString(); }
+  let history = [];
+  if (r.History) { try { const h = JSON.parse(r.History); if (Array.isArray(h)) history = h; } catch (e) { /* ignore malformed history cell */ } }
   return {
     id: String(r.ID || '').trim(),
     staffName: r.StaffName || '',
@@ -800,6 +886,8 @@ function mapWorkerRow_(r) {
     staffMobile: r.StaffMobile || '',
     partyMobile: r.PartyMobile || '',
     partyAddress: r.PartyAddress || '',
+    status: String(r.Status || '').toLowerCase().includes('off') ? 'off' : 'on',
+    history,
     createdAt: created
   };
 }
@@ -836,7 +924,8 @@ function mapBillRows_(rows, center) {
         staffId: '', staffName: r.Staff || '', staffType: r.StaffType || '',
         lines: [], totalAmount: 0, amountInWords: '',
         printCount: Number(String(r.Printed || '').replace(/[^0-9]/g, '')) || 0,
-        createdAt: parseDMY_(r.Date) || PULL_FALLBACK_DATE_
+        printedAt: r.PrintedAt || '',
+        createdAt: r.CreatedAt || parseDMY_(r.Date) || PULL_FALLBACK_DATE_
       });
     }
     const b = byId.get(key);
@@ -935,6 +1024,7 @@ async function pullFromServer(app) {
 class App {
   constructor() {
     this.tab = 'dashboard';
+    this.dashModal = null;
     this.showForm = false; this.formType = null; this.formData = {};
     this.editingId = null; this.viewId = null; this.billLines = [];
     this.syncStatus = 'idle'; this.printBatch = [];
@@ -1128,7 +1218,7 @@ class App {
   }
 
   setTab(t) {
-    this.tab = t; this.showForm = false; this.viewId = null;
+    this.tab = t; this.showForm = false; this.viewId = null; this.dashModal = null;
     this.formData = {}; this.editingId = null; this.render();
   }
 
@@ -1217,6 +1307,8 @@ class App {
       staffMobile: (fd.wstaffmobile || '').replace(/[^0-9]/g, '').slice(0, 10),
       partyMobile: (fd.wpartymobile || '').replace(/[^0-9]/g, '').slice(0, 10),
       partyAddress: (fd.wpartyaddress || '').trim(),
+      status: fd.wstatus === 'off' ? 'off' : 'on',
+      history: orig ? (orig.history || []) : [],
       createdAt: orig ? orig.createdAt : new Date().toISOString()
     };
     if (isEdit) {
@@ -1241,9 +1333,43 @@ class App {
     this.formData = {
       wstaffname: w.staffName || '', wdutydate: w.dutyDate || '',
       wstaffmobile: w.staffMobile || '', wpartymobile: w.partyMobile || '',
-      wpartyaddress: w.partyAddress || ''
+      wpartyaddress: w.partyAddress || '', wstatus: w.status || 'on'
     };
     this.formType = 'worker'; this.showForm = true; this.viewId = null; this.render();
+  }
+  // Flip a worker between On Duty (green) and Off Duty (red).
+  // Going OFF closes out the current period into w.history (from -> to).
+  // Going back ON asks whether it's the same party as last time — if not,
+  // fresh party details are collected before the new period starts.
+  async toggleWorkerDuty(id) {
+    const w = this.worker.find(x => x.id === id); if (!w) return;
+    const goingOff = (w.status || 'on') !== 'off';
+    if (goingOff) {
+      w.history = w.history || [];
+      w.history.push({
+        from: w.dutyDate || todayYmd(),
+        to: todayYmd(),
+        partyMobile: w.partyMobile || '',
+        partyAddress: w.partyAddress || '',
+        staffMobile: w.staffMobile || ''
+      });
+      w.status = 'off';
+      await this._save('worker', w); syncWorker(w, 'update');
+      this.render();
+      toast('Marked Off Duty', 'info');
+      return;
+    }
+    const choice = await askDutyRestart(w);
+    if (!choice) return; // cancelled — leave as Off Duty
+    if (!choice.reuse) {
+      w.partyMobile = choice.partyMobile || '';
+      w.partyAddress = choice.partyAddress || '';
+    }
+    w.dutyDate = todayYmd();
+    w.status = 'on';
+    await this._save('worker', w); syncWorker(w, 'update');
+    this.render();
+    toast('Marked On Duty', 'info');
   }
 
   /* ════ ONLINE DETAILS CRUD ════ */
@@ -1487,11 +1613,14 @@ class App {
   _markBillPrinted(b) {
     if (!b) return;
     b.printCount = (b.printCount || 0) + 1;
+    b.printedAt = new Date().toISOString();
     this._save('bills', b);
     const sheet = b.center === 'MANAV_SEVA' ? 'Manav Seva Kalyan Bill' : 'Patient Care Centre Bill';
-    enq({ action: 'update', sheetName: sheet, data: { ID: b.serial, Printed: b.printCount } });
+    enq({ action: 'update', sheetName: sheet, data: { ID: b.serial, Printed: b.printCount, PrintedAt: b.printedAt } });
   }
   viewBill(id) { this.viewId = id; this.render() }
+  // Open a single bill's detail straight from the dashboard chip.
+  openBill(id) { const b = this.bills.find(x => x.id === id); if (!b) { toast('Bill not found', 'error'); return } this.dashModal = null; this.tab = 'bills'; this.showForm = false; this.viewId = id; this.render() }
   toggleBatch(id) {
     const i = this.printBatch.indexOf(id);
     if (i > -1) this.printBatch.splice(i, 1);
@@ -1571,6 +1700,29 @@ class App {
   }
 
   /* ════ WORKER DETAILS ════ */
+  // Duty history block for the worker detail view — current open period
+  // (if On Duty) first, then past periods newest-first, each with the
+  // party they were serving at the time.
+  _workerHistoryHtml(w) {
+    const past = (w.history || []).slice().reverse();
+    const isOn = (w.status || 'on') !== 'off';
+    if (!past.length && !isOn) return '';
+    const period = (from, to, partyAddress, partyMobile, open) => `
+<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;padding:10px 0;border-bottom:1px solid #f1f5f9">
+  <div style="min-width:0">
+    <p style="margin:0;font-size:.82rem;font-weight:700;color:#1e293b">${fmtDate(from) || '—'} → ${open ? '<span style="color:#059669">Present</span>' : (fmtDate(to) || '—')}</p>
+    ${partyAddress ? `<p style="margin:2px 0 0;font-size:.78rem;color:#64748b">📍 ${esc(partyAddress)}</p>` : ''}
+    ${partyMobile ? `<p style="margin:2px 0 0;font-size:.78rem;color:#94a3b8">📞 ${esc(partyMobile)}</p>` : ''}
+  </div>
+  <span style="flex-shrink:0;font-size:.68rem;font-weight:700;padding:2px 8px;border-radius:999px;${open ? 'background:#dcfce7;color:#15803d' : 'background:#f1f5f9;color:#64748b'}">${open ? 'On Duty' : 'Off Duty'}</span>
+</div>`;
+    return `
+<div style="margin-top:1rem">
+  <p style="margin:0 0 .3rem;font-size:.75rem;font-weight:800;color:#94a3b8;letter-spacing:.03em;text-transform:uppercase">Duty History</p>
+  ${isOn ? period(w.dutyDate, '', w.partyAddress, w.partyMobile, true) : ''}
+  ${past.map(h => period(h.from, h.to, h.partyAddress, h.partyMobile, false)).join('')}
+</div>`;
+  }
   _rWorker() {
     const fd = this.formData;
     if (this.showForm && this.formType === 'worker') {
@@ -1581,6 +1733,12 @@ class App {
   <div class="grid gap-4 mb-4">
     <div><label class="flbl">Staff Name</label><input class="finp" placeholder="Staff name" value="${esc(fd.wstaffname || '')}" oninput="APP.formData.wstaffname=this.value"></div>
     <div><label class="flbl">Duty Date</label><input class="finp" type="date" value="${esc(fd.wdutydate || '')}" oninput="APP.formData.wdutydate=this.value"></div>
+    <div><label class="flbl">Duty Status</label>
+      <div class="duty-toggle">
+        <button type="button" class="duty-pill ${(fd.wstatus || 'on') === 'on' ? 'on-active' : ''}" onclick="APP.formData.wstatus='on';APP.render()"><span class="duty-dot on"></span> On Duty</button>
+        <button type="button" class="duty-pill ${fd.wstatus === 'off' ? 'off-active' : ''}" onclick="APP.formData.wstatus='off';APP.render()"><span class="duty-dot off"></span> Off Duty</button>
+      </div>
+    </div>
     <div><label class="flbl">Staff Mobile No.</label><input class="finp" type="tel" inputmode="numeric" maxlength="10" placeholder="10-digit staff number" value="${esc(fd.wstaffmobile || '')}" oninput="this.value=this.value.replace(/[^0-9]/g,'').slice(0,10);APP.formData.wstaffmobile=this.value"></div>
     <div><label class="flbl">Party Mobile No.</label><input class="finp" type="tel" inputmode="numeric" maxlength="10" placeholder="10-digit party number" value="${esc(fd.wpartymobile || '')}" oninput="this.value=this.value.replace(/[^0-9]/g,'').slice(0,10);APP.formData.wpartymobile=this.value"></div>
     <div><label class="flbl">Party Address</label><textarea class="finp" rows="2" placeholder="Party address" oninput="APP.formData.wpartyaddress=this.value">${esc(fd.wpartyaddress || '')}</textarea></div>
@@ -1599,7 +1757,7 @@ class App {
 <button onclick="APP.viewId=null;APP.render()" class="fbtn fbtn-cancel mb-4 text-sm">${ico('back')} Back</button>
 <div class="bg-white rounded-2xl shadow-sm border border-gray-100 p-5 w-full max-w-lg mx-auto">
   <div class="flex items-start justify-between mb-3">
-    <div class="flex items-center gap-1.5"><h2 class="font-black text-xl">${esc(w.staffName || '—')}</h2><span class="text-xs font-bold px-2 py-0.5 rounded" style="background:#ffe4e6;color:#be123c">Worker</span></div>
+    <div class="flex items-center gap-2 flex-wrap"><h2 class="font-black text-xl">${esc(w.staffName || '—')}</h2><button class="duty-badge duty-${w.status || 'on'}" title="Click to toggle duty" onclick="APP.toggleWorkerDuty('${w.id}')"><span class="duty-dot ${w.status || 'on'}"></span>${(w.status || 'on') === 'off' ? 'Off Duty' : 'On Duty'}</button></div>
     <div class="flex gap-2 flex-shrink-0">
       <button onclick="APP.editWorker('${w.id}')" class="fbtn text-sm" style="background:#fef3c7;color:#92400e;border:none">${ico('edit', 'w-3.5 h-3.5')} Edit</button>
       <button onclick="APP.deleteWorker('${w.id}')" class="fbtn text-sm" style="background:#fef2f2;color:#dc2626;border:none">${ico('trash', 'w-3.5 h-3.5')} Delete</button>
@@ -1609,6 +1767,7 @@ class App {
   ${row('Staff Mobile No.', w.staffMobile)}
   ${row('Party Mobile No.', w.partyMobile)}
   ${row('Party Address', w.partyAddress)}
+  ${this._workerHistoryHtml(w)}
 </div>`;
     }
     const { list, total, pages } = this._page('worker');
@@ -1624,11 +1783,15 @@ ${list.map(w => `
 <div class="card p-4 cursor-pointer" style="border-left:4px solid #f43f5e" onclick="APP.viewId='${w.id}';APP.render()">
   <div class="flex items-start justify-between gap-2">
     <div class="min-w-0">
-      <p class="font-bold text-gray-900 truncate">${esc(w.staffName || '—')}</p>
+      <div class="flex items-center gap-2 flex-wrap">
+        <p class="font-bold text-gray-900 truncate">${esc(w.staffName || '—')}</p>
+        <button class="duty-badge duty-${w.status || 'on'}" title="Click to toggle duty" onclick="event.stopPropagation();APP.toggleWorkerDuty('${w.id}')"><span class="duty-dot ${w.status || 'on'}"></span>${(w.status || 'on') === 'off' ? 'Off Duty' : 'On Duty'}</button>
+      </div>
       ${w.dutyDate ? `<p class="text-xs text-gray-500 mt-0.5">📅 Duty: ${esc(fmtDate(w.dutyDate))}</p>` : ''}
       ${w.staffMobile ? `<p class="text-xs text-gray-600 mt-0.5">📞 Staff: ${esc(w.staffMobile)}</p>` : ''}
       ${w.partyMobile ? `<p class="text-xs text-gray-600 mt-0.5">📞 Party: ${esc(w.partyMobile)}</p>` : ''}
       ${w.partyAddress ? `<p class="text-xs text-gray-400 mt-0.5">📍 ${esc(w.partyAddress)}</p>` : ''}
+      ${(w.history || []).length ? `<p class="text-xs text-gray-400 mt-0.5">🕒 ${w.history.length} past duty period${w.history.length !== 1 ? 's' : ''}</p>` : ''}
     </div>
     <div class="flex flex-col gap-1.5 flex-shrink-0">
       <button onclick="event.stopPropagation();APP.editWorker('${w.id}')" class="fbtn text-xs" style="background:#fef3c7;color:#92400e;border:none">${ico('edit', 'w-3 h-3')} Edit</button>
@@ -1736,19 +1899,20 @@ ${list.map(o => `
     const totalAmount = this.bills.reduce((sum, b) => sum + (Number(b.totalAmount) || 0), 0);
     const fmtAmt = '₹' + totalAmount.toLocaleString('en-IN');
     const sortedBills = this.bills.slice().sort((a, b) => String(a.billNo).localeCompare(String(b.billNo)));
+    const chip = (b, extra = '') => `<span>${esc(b.billNo)}${extra}</span>`;
     const genChips = sortedBills.length
-      ? `<div class="dash-card-chips">${sortedBills.map(b => `<span>${esc(b.billNo)}</span>`).join('')}</div>` : '';
+      ? `<div class="dash-card-chips">${sortedBills.map(b => chip(b)).join('')}</div>` : '';
     const printedBills = sortedBills.filter(b => (b.printCount || 0) > 0);
     const printChips = printedBills.length
-      ? `<div class="dash-card-chips">${printedBills.map(b => `<span>${esc(b.billNo)} ×${b.printCount}</span>`).join('')}</div>` : '';
+      ? `<div class="dash-card-chips">${printedBills.map(b => chip(b, ` ×${b.printCount}`)).join('')}</div>` : '';
     const cards = [
       { k: 'patients', label: 'Patients', value: this.patients.length, ic: I.patients, g: 'linear-gradient(135deg,#3b82f6,#2563eb)' },
       { k: 'staff', label: 'Staff', value: this.staff.length, ic: I.staff, g: 'linear-gradient(135deg,#10b981,#0d9488)' },
-      { k: 'bills', label: 'Bills Generated', value: this.bills.length, ic: I.bills, g: 'linear-gradient(135deg,#7c3aed,#6d28d9)', detail: genChips },
-      { k: 'bills', label: 'Bills Printed', value: this.bills.filter(b => (b.printCount || 0) > 0).length, ic: I.print, g: 'linear-gradient(135deg,#8b5cf6,#7c3aed)', detail: printChips },
+      { k: 'bills', label: 'Bills Generated', value: this.bills.length, ic: I.bills, g: 'linear-gradient(135deg,#7c3aed,#6d28d9)', detail: genChips, modal: 'generated' },
+      { k: 'bills', label: 'Bills Printed', value: this.bills.filter(b => (b.printCount || 0) > 0).length, ic: I.print, g: 'linear-gradient(135deg,#8b5cf6,#7c3aed)', detail: printChips, modal: 'printed' },
       { k: 'online', label: 'Online Details', value: this.online.length, ic: I.online, g: 'linear-gradient(135deg,#0ea5e9,#0284c7)' },
       { k: 'worker', label: 'Worker Details', value: this.worker.length, ic: I.worker, g: 'linear-gradient(135deg,#f43f5e,#e11d48)' },
-      { k: 'bills', label: 'Total Amount', value: fmtAmt, ic: I.bills, g: 'linear-gradient(135deg,#f59e0b,#d97706)' }
+      { k: '', label: 'Total Amount', value: fmtAmt, ic: I.bills, g: 'linear-gradient(135deg,#f59e0b,#d97706)', wide: true }
     ];
     return `
 <div class="mb-5">
@@ -1756,13 +1920,52 @@ ${list.map(o => `
   <p class="text-sm text-gray-400">Overview of Manav Seva Kalyan &amp; Patient Care Centre</p>
 </div>
 <div class="dash-grid">
-  ${cards.map(c => `
-  <button onclick="APP.setTab('${c.k}')" class="dash-card${c.detail ? ' dash-card-wide' : ''}" style="background:${c.g}">
+  ${cards.map(c => {
+      const cls = `dash-card${(c.modal || c.wide) ? ' dash-card-wide' : ''}`;
+      const inner = `
     <span class="dash-ic">${c.ic}</span>
-    <span class="dash-val">${typeof c.value === 'number' ? c.value : c.value}</span>
+    <span class="dash-val">${c.value}</span>
     <span class="dash-label">${c.label}</span>
-    ${c.detail || ''}
-  </button>`).join('')}
+    ${c.detail || ''}`;
+      // Bill cards open an in-dashboard popup; the amount card is display-only;
+      // the rest navigate to their section.
+      if (c.modal) return `<button onclick="APP.dashModal='${c.modal}';APP.render()" class="${cls}" style="background:${c.g}">${inner}</button>`;
+      if (!c.k) return `<div class="${cls} dash-card-static" style="background:${c.g}">${inner}</div>`;
+      return `<button onclick="APP.setTab('${c.k}')" class="${cls}" style="background:${c.g}">${inner}</button>`;
+    }).join('')}
+</div>
+${this._dashModalHtml()}`;
+  }
+
+  // Popup listing generated / printed bills with dates, times and counts.
+  _dashModalHtml() {
+    if (!this.dashModal) return '';
+    const isGen = this.dashModal === 'generated';
+    const all = this.bills.slice().sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+    const list = isGen ? all : all.filter(b => (b.printCount || 0) > 0);
+    const title = isGen ? `Bills Generated (${list.length})` : `Bills Printed (${list.length})`;
+    const rows = list.length ? list.map(b => `
+    <div class="dm-row">
+      <div class="dm-main">
+        <span class="dm-bno" onclick="APP.openBill('${b.id}')" title="View this bill">${esc(b.billNo)}</span>
+        ${b.patientName ? `<span class="dm-pat">${esc(b.patientName)}</span>` : ''}
+      </div>
+      <div class="dm-side">
+        <span class="dm-amt">₹${Number(b.totalAmount || 0).toLocaleString('en-IN')}</span>
+        ${isGen
+        ? `<span class="dm-when">🕒 Generated: ${fmtDateTime(b.createdAt)}</span>`
+        : `<span class="dm-when"><b class="dm-times">×${b.printCount}</b>${b.printedAt ? ' · 🖨 Last: ' + fmtDateTime(b.printedAt) : ''}</span>`}
+      </div>
+    </div>`).join('') : `<div class="dm-empty">${isGen ? 'No bills generated yet.' : 'No bills printed yet.'}</div>`;
+    return `
+<div class="dm-overlay" onclick="APP.dashModal=null;APP.render()">
+  <div class="dm-box" onclick="event.stopPropagation()">
+    <div class="dm-head">
+      <h3>${title}</h3>
+      <button class="dm-x" onclick="APP.dashModal=null;APP.render()" title="Close">✕</button>
+    </div>
+    <div class="dm-body">${rows}</div>
+  </div>
 </div>`;
   }
 

@@ -2,7 +2,7 @@
 /* ══════════════════════════════════════════════════════════
    CONFIG
 ══════════════════════════════════════════════════════════ */
-const GAS_URL = 'https://script.google.com/macros/s/AKfycbyOUmx4CMaEE6JiGYtdmk84Ek96Uw0zsWQCTitdEf1JQ7ZBIt0OvhaTaon_2EOQqhn2/exec';
+const GAS_URL = 'https://script.google.com/macros/s/AKfycbyvRE-T1EQJ61oO50EPx9gNAmAa7TgxP6KqQmbz_wsf_LdjMESFLudb42dGTbSeoDOCUg/exec';
 // Must match API_SECRET in the Apps Script backend exactly, or every
 // request gets rejected as Unauthorized.
 const GAS_SECRET = 'PatientCare9819086415&ManavSeva9920700815';

@@ -1183,6 +1183,7 @@ select:focus-visible {
         font-size: 9.5px;
         display: flex;
         flex-direction: column;
+        margin: auto;
     }
 
     .bh {

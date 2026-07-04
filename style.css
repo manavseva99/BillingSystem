@@ -1210,13 +1210,20 @@ select:focus-visible {
 
     .b-watermark-wrap {
         position: relative;
+        flex: 1 1 auto;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
     }
 
-    /* Centre logo watermark — spans from Patient Name down to just
-       before the Total (In Words) row, i.e. it sits behind b-pinfo
-       and b-tbl only (its parent, .b-watermark-wrap, wraps exactly
-       those two and nothing else). Wide + faint so the printed text
-       and table lines stay perfectly legible on top of it. */
+    /* Centre logo watermark — spans from Patient Name all the way down
+       to just before the Total (In Words) row. .b-watermark-wrap is a
+       flex:1 child of .bill-box, so it stretches to fill all the space
+       between the header/meta block and the total row (not just the
+       height of its own text/table content) — the watermark then fills
+       that entire stretched box via position:absolute + inset:0. Large
+       + faint so the printed text and table lines stay perfectly
+       legible on top of it. */
     .b-watermark {
         position: absolute;
         top: 0;
@@ -1225,8 +1232,8 @@ select:focus-visible {
         left: 0;
         background-repeat: no-repeat;
         background-position: center;
-        background-size: auto 92%;
-        opacity: .15;
+        background-size: contain;
+        opacity: .20;
         z-index: 0;
         pointer-events: none;
     }

@@ -188,6 +188,14 @@ function toYmd(v) {
 }
 const calcDays = (s, e) => { if (!s || !e) return 0; const ms = new Date(e) - new Date(s); return ms < 0 ? 0 : Math.round(ms / 864e5) + 1 };
 const byDate = (a, b) => new Date(b.createdAt) - new Date(a.createdAt);
+// Ascending by numeric id (1,2,3…); non-numeric ids sort last, tie-broken by
+// creation time. Used to give the dashboard list tabs a clean 1,2,3 sequence.
+const byIdAsc = (a, b) => {
+  const na = /^\d+$/.test(String(a.id)) ? parseInt(a.id, 10) : Infinity;
+  const nb = /^\d+$/.test(String(b.id)) ? parseInt(b.id, 10) : Infinity;
+  if (na !== nb) return na - nb;
+  return new Date(a.createdAt || 0) - new Date(b.createdAt || 0);
+};
 // ══════════════════════════════════════════════════════════
 // CENTRES — single source of truth for every centre-specific
 // value (bill header, address, sheet name, prefix, badge colors).
@@ -289,6 +297,31 @@ function fileChip(f, onclick, name) {
 // another device — where the raw file bytes aren't local but the Google
 // Drive link(s) are. Accepts a single URL or several joined by commas.
 // Returns '' when there's no usable https link.
+// Extracts the file ID out of common Google Drive share-link formats
+// (".../d/FILE_ID/...", "...?id=FILE_ID...", "...open?id=FILE_ID") and turns
+// it into a URL that renders as an actual <img>, instead of only being
+// usable as a click-through link. Returns '' if no ID can be found.
+function driveThumbUrl(raw) {
+  if (!raw) return '';
+  const url = String(raw).split(/\s*,\s*/)[0].trim();
+  const m = url.match(/\/d\/([a-zA-Z0-9_-]{10,})/) || url.match(/[?&]id=([a-zA-Z0-9_-]{10,})/);
+  if (!m) return '';
+  return `https://drive.google.com/thumbnail?id=${m[1]}&sz=w200`;
+}
+// A small round photo, given either a local (base64) photo, a Drive share
+// link, or neither. Falls back to the 👤 placeholder icon only when there's
+// truly no photo to show — including if a linked Drive image fails to load
+// (broken/private link), via the onerror swap.
+function staffAvatar(s, sizeClass, emojiSizeClass) {
+  emojiSizeClass = emojiSizeClass || 'text-xs';
+  if (s.photo) return `<img src="${s.photo}" class="${sizeClass} rounded-full object-cover flex-shrink-0 border border-green-200">`;
+  const thumb = driveThumbUrl(s.photoLink);
+  if (thumb) {
+    return `<img src="${thumb}" class="${sizeClass} rounded-full object-cover flex-shrink-0 border border-green-200" onerror="this.replaceWith(Object.assign(document.createElement('a'),{href:'${esc(String(s.photoLink).split(/\s*,\s*/)[0])}',target:'_blank',rel:'noopener',className:'${sizeClass} rounded-full bg-green-50 flex items-center justify-center flex-shrink-0 ${emojiSizeClass} border border-green-200',innerHTML:'👤',title:'Open photo in Google Drive'}))">`;
+  }
+  return `<div class="${sizeClass} rounded-full bg-green-50 flex items-center justify-center flex-shrink-0 text-green-600 ${emojiSizeClass}">👤</div>`;
+}
+
 function driveLinkBtns(raw, label) {
   if (!raw) return '';
   const urls = String(raw).split(/\s*,\s*/).map(u => u.trim()).filter(u => /^https?:\/\//.test(u));
@@ -686,7 +719,7 @@ const syncWorker = (w, act) => enq({
     StaffMobile: w.staffMobile || '',
     PartyMobile: w.partyMobile || '',
     PartyAddress: w.partyAddress || '',
-    Status: w.status === 'off' ? 'Off Duty' : 'On Duty',
+    Status: w.status === 'off' ? 'Off Duty' : (w.status === 'on' ? 'On Duty' : ''),
     History: JSON.stringify(w.history || [])
   }
 });
@@ -747,7 +780,7 @@ function buildBillHTML(bill) {
     <p class="addr">${addr}</p>
   </div>
   <div class="b-meta"> 
-      <span>Bill No :- <span class="b-billno-blank"></span></span>
+    <span>Bill No :- <span class="b-billno-blank"></span></span>
     <span>Date: <b>${todayStr()}</b></span>
   </div>
   <div class="b-pinfo">
@@ -851,13 +884,13 @@ async function doPrint(bills) {
 
 
 // Print an arbitrary list of records as a clean, spreadsheet-style table
-// (landscape A4). Used by the Print button on the list tabs.
+// (portrait A4). Used by the Print button on the list tabs.
 async function doPrintList(title, columns, rows, metaText) {
   const ps = document.getElementById('print-sheet');
   if (!ps) { toast('Print area not found — please reload and try again', 'error'); return; }
   if (!rows || !rows.length) { toast('No records to print', 'warn'); return; }
   const esc2 = v => String(v == null ? '' : v).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
-  const thead = '<th>#</th>' + columns.map(c => `<th>${esc2(c[0])}</th>`).join('');
+  const thead = '<th class="pl-no">#</th>' + columns.map(c => `<th>${esc2(c[0])}</th>`).join('');
   const tbody = rows.map((r, i) => {
     const tds = columns.map(c => {
       const v = typeof c[1] === 'function' ? c[1](r) : r[c[1]];
@@ -865,13 +898,20 @@ async function doPrintList(title, columns, rows, metaText) {
     }).join('');
     return `<tr><td class="pl-no">${i + 1}</td>${tds}</tr>`;
   }).join('');
+  // Portrait A4 gives ~190mm of usable width after margins. That's plenty
+  // for a handful of columns (e.g. Patients: 5), but tables with lots of
+  // columns (Staff/Worker/Online: 7-9) get cramped at the default size —
+  // so the table shrinks itself a bit as columns increase, rather than
+  // letting the last column's text/border get squeezed against the edge.
+  const nCols = columns.length + 1; // +1 for the # column
+  const compactCls = nCols >= 8 ? ' pl-compact-2' : (nCols >= 6 ? ' pl-compact-1' : '');
   ps.innerHTML = `
-<div class="print-list">
+<div class="print-list${compactCls}">
   <h2>${esc2(title)}</h2>
   <div class="meta">${esc2(metaText)}</div>
   <table><thead><tr>${thead}</tr></thead><tbody>${tbody}</tbody></table>
 </div>`;
-  // Lists print in landscape; inject a temporary @page rule. This is scoped
+  // Lists print in portrait; inject a temporary @page rule. This is scoped
   // inside "@media print" so it (and the #print-sheet visibility it used to
   // force unconditionally) only ever applies while actually printing — never
   // on the normal dashboard screen. #print-sheet's visibility itself is
@@ -879,10 +919,10 @@ async function doPrintList(title, columns, rows, metaText) {
   // doesn't need to be repeated/forced here at all.
   let st = document.getElementById('print-page-style');
   if (!st) { st = document.createElement('style'); st.id = 'print-page-style'; document.head.appendChild(st); }
-  st.textContent = '@media print { @page { size: A4 landscape; margin: 10mm } }';
+  st.textContent = '@media print { @page { size: A4 portrait; margin: 10mm } }';
   // Wait for a full paint before printing (same as the bill printer). Do NOT
   // clear the content on afterprint — that blanks the page on mobile. We only
-  // remove the injected landscape rule afterwards so bills print portrait again.
+  // remove the injected portrait override afterwards so bills' own @page rule applies again.
   await waitForPrintReady(ps);
   try {
     window.print();
@@ -981,7 +1021,12 @@ function mapWorkerRow_(r) {
     staffMobile: r.StaffMobile || '',
     partyMobile: r.PartyMobile || '',
     partyAddress: r.PartyAddress || '',
-    status: String(r.Status || '').toLowerCase().includes('off') ? 'off' : 'on',
+    status: (() => {
+      const s = String(r.Status || '').toLowerCase();
+      if (s.includes('off')) return 'off';
+      if (s.includes('on')) return 'on';
+      return ''; // blank in the sheet → status left unset (optional)
+    })(),
     history: (() => { try { const h = JSON.parse(r.History || '[]'); return Array.isArray(h) ? h : []; } catch { return []; } })(),
     createdAt: created
   };
@@ -1298,34 +1343,78 @@ class App {
   }
 
   // KEY FIX: search updates the state and re-renders WITHOUT resetting search value
+  // PROPER FIX: a full schedRender() replaces the whole page's innerHTML, which
+  // tears down and rebuilds the <input> the user is actively typing into. Even
+  // with the focus/cursor restore below, destroying that DOM node on every
+  // single keystroke is what made typing feel like it "needed two letters" —
+  // the very first keystroke's re-render could race with the browser handing
+  // the next keystroke to a freshly (re)focused input on some phones/browsers.
+  // _patchList() instead updates only the results block in place and never
+  // touches the search input's DOM node, so one typed character is enough.
   _search(key, q) {
     this.search[key] = q;
     this.page[key] = 0;
-    schedRender();
+    this._patchList(key);
+  }
+  // Re-render just the search/date/page-dependent part of a list tab (the
+  // record count + table/cards + empty-state + pager) without rebuilding the
+  // rest of the page. Falls back to a full render if the tab isn't currently
+  // the one on screen (e.g. the results wrapper isn't in the DOM).
+  _patchList(key) {
+    const BODY_FN = { patients: '_patientsBody', staff: '_staffBody', online: '_onlineBody', worker: '_workerBody', bills: '_billsBody' };
+    const fn = BODY_FN[key];
+    const wrap = fn && document.getElementById('lblk-' + key);
+    if (!wrap || typeof this[fn] !== 'function') { schedRender(); return; }
+    wrap.innerHTML = this[fn]();
+    const total = this._page(key).total;
+    const cnt = document.getElementById('cnt-' + key);
+    if (cnt) cnt.textContent = `${total} record${total !== 1 ? 's' : ''}`;
   }
   _filtered(key) {
     const q = (this.search[key] || '').trim();
     let res;
-    // A pure-number query is treated as an ID lookup first — e.g. typing
-    // "5" finds staff/patient #5 without being diluted by unrelated numeric
-    // matches like rate or mobile number digits.
-    if (q && /^\d+$/.test(q) && (key === 'staff' || key === 'patients')) {
-      const byId = this[key].filter(r => String(r.id) === q || String(r.id).startsWith(q));
-      res = byId.length ? byId : IDX[key].search(this.search[key], this[key]);
-    } else if (key === 'worker') {
-      const ql = q.toLowerCase();
-      res = !ql ? this.worker.slice() : this.worker.filter(w =>
-        [w.staffName, w.staffMobile, w.partyMobile, w.partyAddress, w.dutyDate]
-          .some(v => String(v || '').toLowerCase().includes(ql)));
-    } else if (key === 'online') {
-      const ql = q.toLowerCase();
-      res = !ql ? this.online.slice() : this.online.filter(o =>
-        [o.company, o.bank, o.onlineApp, o.paymentDetails, o.amount, o.date]
-          .some(v => String(v || '').toLowerCase().includes(ql)));
+    if (!q) {
+      res = this[key].slice();
     } else {
-      res = IDX[key].search(this.search[key], this[key]);
+      // Search across EVERY property of each record (name, mobile, address,
+      // type, rate, dates, company, bank, app, payment details, party info,
+      // etc.) — multi-word queries must all match somewhere in the record.
+      const terms = q.toLowerCase().split(/\s+/).filter(Boolean);
+      res = this[key].filter(r => this._recordMatches(key, r, terms));
     }
-    return this._dateFilter(key, res);
+    const out = this._dateFilter(key, res).slice();
+    // Show the list-style tabs in a clean, stable ascending order (by their
+    // numeric per-centre id) so the ID / serial column reads 1,2,3,4,5 top to
+    // bottom instead of the jumbled createdAt order. Non-numeric ids (rare
+    // legacy records) fall to the end, ordered by creation time.
+    if (key === 'patients' || key === 'staff' || key === 'online' || key === 'worker') {
+      out.sort(byIdAsc);
+    }
+    return out;
+  }
+  // Does a record match ALL the given lowercase search terms, checking every
+  // simple (string/number) property? Long blobs (photo data URLs, serialized
+  // history) are skipped so they never cause phantom matches.
+  _recordMatches(key, r, terms) {
+    if (!terms.length) return true;
+    const parts = [];
+    const push = v => {
+      if (v == null) return;
+      if (typeof v === 'number') { parts.push(String(v)); return; }
+      if (typeof v === 'string') {
+        if (v.length > 300 || v.startsWith('data:')) return;
+        parts.push(v);
+      }
+    };
+    Object.values(r).forEach(push);
+    // A couple of friendlier, human-readable fields to search on too.
+    if (key === 'worker') {
+      const st = r.status || '';
+      push(st === 'off' ? 'off duty' : (st === 'on' ? 'on duty' : ''));
+    }
+    if (r.createdAt) push(fmtDate((r.createdAt || '').slice(0, 10)));
+    const hay = parts.join(' ').toLowerCase();
+    return terms.every(t => hay.includes(t));
   }
   // Restrict a list to records whose date falls within the from/to range.
   // Uses createdAt (ISO) which every record has.
@@ -1354,7 +1443,7 @@ class App {
     }
     (which === 'from' ? this.dateFrom : this.dateTo)[key] = val;
     this.page[key] = 0;
-    schedRender();
+    this._patchList(key);
   }
   _page(key) {
     const f = this._filtered(key);
@@ -1439,6 +1528,20 @@ class App {
   }
 
   /* ════ WORKER DETAILS CRUD ════ */
+  // Called when the user presses Enter inside any add/edit form. Fires the
+  // primary action for whichever form is currently open, so keyboard users
+  // don't have to reach for the mouse. For the bill form, Enter adds the
+  // current line item (its most-repeated action) rather than saving.
+  submitForm() {
+    if (!this.showForm) return;
+    switch (this.formType) {
+      case 'patient': this.savePatient(); break;
+      case 'staff': this.saveStaff(); break;
+      case 'worker': this.saveWorker(); break;
+      case 'online': this.saveOnline(); break;
+      case 'bill': this.addLine(); break;
+    }
+  }
   async saveWorker() {
     const fd = this.formData;
     const staffName = (fd.wstaffname || '').trim();
@@ -1452,7 +1555,7 @@ class App {
       staffMobile: (fd.wstaffmobile || '').replace(/[^0-9]/g, '').slice(0, 10),
       partyMobile: (fd.wpartymobile || '').replace(/[^0-9]/g, '').slice(0, 10),
       partyAddress: (fd.wpartyaddress || '').trim(),
-      status: fd.wstatus === 'off' ? 'off' : 'on',
+      status: fd.wstatus === 'off' ? 'off' : (fd.wstatus === 'on' ? 'on' : ''),
       history: orig ? (orig.history || []) : [],
       createdAt: orig ? orig.createdAt : new Date().toISOString()
     };
@@ -1478,7 +1581,7 @@ class App {
     this.formData = {
       wstaffname: w.staffName || '', wdutydate: w.dutyDate || '',
       wstaffmobile: w.staffMobile || '', wpartymobile: w.partyMobile || '',
-      wpartyaddress: w.partyAddress || '', wstatus: w.status || 'on'
+      wpartyaddress: w.partyAddress || '', wstatus: w.status || ''
     };
     this.formType = 'worker'; this.showForm = true; this.viewId = null; this.render();
   }
@@ -1486,6 +1589,14 @@ class App {
   async toggleWorkerDuty(id) {
     const w = this.worker.find(x => x.id === id); if (!w) return;
     const today = new Date().toISOString().slice(0, 10);
+    // Status not set yet → first tap simply marks the worker On Duty.
+    if (!w.status) {
+      w.status = 'on';
+      await this._save('worker', w); syncWorker(w, 'update');
+      this.render();
+      toast(`${w.staffName || 'Worker'} marked On Duty`, 'success');
+      return;
+    }
     if ((w.status || 'on') === 'on') {
       // ON -> OFF: log the completed duty period into history.
       const end = await askDate('End Duty', `Mark ${w.staffName || 'this worker'} as Off Duty. When did this duty period end?`, today);
@@ -1878,10 +1989,10 @@ class App {
   <div class="grid gap-4 mb-4">
     <div><label class="flbl">Staff Name</label><input class="finp" placeholder="Staff name" value="${esc(fd.wstaffname || '')}" oninput="APP.formData.wstaffname=this.value"></div>
     <div><label class="flbl">Duty Date</label><input class="finp" type="date" value="${esc(fd.wdutydate || '')}" oninput="APP.formData.wdutydate=this.value"></div>
-    <div><label class="flbl">Duty Status</label>
+    <div><label class="flbl">Duty Status <span class="text-gray-400 font-normal">(optional)</span></label>
       <div class="duty-toggle">
-        <button type="button" class="duty-pill ${(fd.wstatus || 'on') === 'on' ? 'on-active' : ''}" onclick="APP.formData.wstatus='on';APP.render()"><span class="duty-dot on"></span> On Duty</button>
-        <button type="button" class="duty-pill ${fd.wstatus === 'off' ? 'off-active' : ''}" onclick="APP.formData.wstatus='off';APP.render()"><span class="duty-dot off"></span> Off Duty</button>
+        <button type="button" class="duty-pill ${fd.wstatus === 'on' ? 'on-active' : ''}" onclick="APP.formData.wstatus = APP.formData.wstatus === 'on' ? '' : 'on';APP.render()"><span class="duty-dot on"></span> On Duty</button>
+        <button type="button" class="duty-pill ${fd.wstatus === 'off' ? 'off-active' : ''}" onclick="APP.formData.wstatus = APP.formData.wstatus === 'off' ? '' : 'off';APP.render()"><span class="duty-dot off"></span> Off Duty</button>
       </div>
     </div>
     <div><label class="flbl">Staff Mobile No.</label><input class="finp" type="tel" inputmode="numeric" maxlength="10" placeholder="10-digit staff number" value="${esc(fd.wstaffmobile || '')}" oninput="this.value=this.value.replace(/[^0-9]/g,'').slice(0,10);APP.formData.wstaffmobile=this.value"></div>
@@ -1902,7 +2013,7 @@ class App {
 <button onclick="APP.viewId=null;APP.render()" class="fbtn fbtn-cancel mb-4 text-sm">${ico('back')} Back</button>
 <div class="bg-white rounded-2xl shadow-sm border border-gray-100 p-5 w-full max-w-lg mx-auto">
   <div class="flex items-start justify-between mb-3">
-    <div class="flex items-center gap-2 flex-wrap"><h2 class="font-black text-xl">${esc(w.staffName || '—')}</h2><button class="duty-badge duty-${w.status || 'on'}" title="Click to toggle duty" onclick="APP.toggleWorkerDuty('${w.id}')"><span class="duty-dot ${w.status || 'on'}"></span>${(w.status || 'on') === 'off' ? 'Off Duty' : 'On Duty'}</button></div>
+    <div class="flex items-center gap-2 flex-wrap"><h2 class="font-black text-xl">${esc(w.staffName || '—')}</h2>${!w.status ? `<button class="duty-badge duty-none" title="Click to set duty" onclick="APP.toggleWorkerDuty('${w.id}')"><span class="duty-dot none"></span>—</button>` : `<button class="duty-badge duty-${w.status}" title="Click to toggle duty" onclick="APP.toggleWorkerDuty('${w.id}')"><span class="duty-dot ${w.status}"></span>${w.status === 'off' ? 'Off Duty' : 'On Duty'}</button>`}</div>
     <div class="flex gap-2 flex-shrink-0">
       <button onclick="APP.editWorker('${w.id}')" class="fbtn text-sm" style="background:#fef3c7;color:#92400e;border:none">${ico('edit', 'w-3.5 h-3.5')} Edit</button>
       <button onclick="APP.deleteWorker('${w.id}')" class="fbtn text-sm" style="background:#fef2f2;color:#dc2626;border:none">${ico('trash', 'w-3.5 h-3.5')} Delete</button>
@@ -1926,24 +2037,29 @@ class App {
   </div>` : ''}
 </div>`;
     }
-    const { list, total, pages } = this._page('worker');
+    const total0 = this._page('worker').total;
     return `
 <div class="flex flex-wrap items-center gap-3 mb-4">
   <button onclick="APP.formType='worker';APP.showForm=true;APP.editingId=null;APP.formData={};APP.render()" class="fbtn" style="background:#f43f5e;color:#fff">${ico('plus')} Add Worker Detail</button>
   ${this._searchBar('worker', 'Search staff, mobile, party, address…', '#f43f5e')}
-  <span class="text-xs text-gray-400 font-medium">${total} record${total !== 1 ? 's' : ''}</span>
+  <span class="text-xs text-gray-400 font-medium" id="cnt-worker">${total0} record${total0 !== 1 ? 's' : ''}</span>
 </div>
-${!total ? `<div class="text-center py-16 text-gray-400 text-sm">${(this.search.worker || this.dateFrom.worker || this.dateTo.worker) ? 'No worker details match.' : 'No worker details yet.'}</div>` :
-        `<div style="overflow-x:auto">
+<div id="lblk-worker">${this._workerBody()}</div>`;
+  }
+  // Results-only block for the Worker Details tab. See _patientsBody() note.
+  _workerBody() {
+    const { list, total, pages } = this._page('worker');
+    if (!total) return `<div class="text-center py-16 text-gray-400 text-sm">${(this.search.worker || this.dateFrom.worker || this.dateTo.worker) ? 'No worker details match.' : 'No worker details yet.'}</div>`;
+    return `<div style="overflow-x:auto">
 <table class="tbl" style="min-width:880px">
   <thead><tr><th>ID</th><th>Staff Name</th><th>Duty Date</th><th>Status</th><th>Staff Mobile</th><th>Party Mobile</th><th>Party Address</th><th>Edit</th><th>Delete</th></tr></thead>
   <tbody>
-${list.map(w => `
+${list.map((w, i) => `
   <tr class="cursor-pointer" onclick="APP.viewId='${w.id}';APP.render()">
-    <td class="c">${esc(w.id)}</td>
+    <td class="c">${this.page.worker * PAGE_SIZE + i + 1}</td>
     <td><span class="font-bold text-gray-900">${esc(w.staffName || '—')}</span></td>
     <td class="c">${w.dutyDate ? esc(fmtDate(w.dutyDate)) : '<span class="text-gray-300">—</span>'}</td>
-    <td class="c"><button class="duty-badge duty-${w.status || 'on'}" title="Click to toggle duty" onclick="event.stopPropagation();APP.toggleWorkerDuty('${w.id}')"><span class="duty-dot ${w.status || 'on'}"></span>${(w.status || 'on') === 'off' ? 'Off Duty' : 'On Duty'}</button></td>
+    <td class="c">${!w.status ? `<button class="duty-badge duty-none" title="Click to set duty" onclick="event.stopPropagation();APP.toggleWorkerDuty('${w.id}')"><span class="duty-dot none"></span>—</button>` : `<button class="duty-badge duty-${w.status}" title="Click to toggle duty" onclick="event.stopPropagation();APP.toggleWorkerDuty('${w.id}')"><span class="duty-dot ${w.status}"></span>${w.status === 'off' ? 'Off Duty' : 'On Duty'}</button>`}</td>
     <td class="c">${w.staffMobile ? '📞 ' + esc(w.staffMobile) : '<span class="text-gray-300">—</span>'}</td>
     <td class="c">${w.partyMobile ? '📞 ' + esc(w.partyMobile) : '<span class="text-gray-300">—</span>'}</td>
     <td>${w.partyAddress ? esc(w.partyAddress) : '<span class="text-gray-300">—</span>'}</td>
@@ -1952,7 +2068,7 @@ ${list.map(w => `
   </tr>`).join('')}
   </tbody>
 </table>
-</div>${this._pager('worker', total, pages)}`}`;
+</div>${this._pager('worker', total, pages)}`;
   }
 
   /* ════ ONLINE DETAILS ════ */
@@ -2017,21 +2133,26 @@ ${list.map(w => `
   ${row('Payment Details', o.paymentDetails)}
 </div>`;
     }
-    const { list, total, pages } = this._page('online');
+    const total0 = this._page('online').total;
     return `
 <div class="flex flex-wrap items-center gap-3 mb-4">
   <button onclick="APP.formType='online';APP.showForm=true;APP.editingId=null;APP.formData={};APP.render()" class="fbtn" style="background:#0ea5e9;color:#fff">${ico('plus')} Add Online Detail</button>
   ${this._searchBar('online', 'Search company, bank, app, staff…', '#0ea5e9')}
-  <span class="text-xs text-gray-400 font-medium">${total} record${total !== 1 ? 's' : ''}</span>
+  <span class="text-xs text-gray-400 font-medium" id="cnt-online">${total0} record${total0 !== 1 ? 's' : ''}</span>
 </div>
-${!total ? `<div class="text-center py-16 text-gray-400 text-sm">${(this.search.online || this.dateFrom.online || this.dateTo.online) ? 'No online details match.' : 'No online details yet.'}</div>` :
-        `<div style="overflow-x:auto">
+<div id="lblk-online">${this._onlineBody()}</div>`;
+  }
+  // Results-only block for the Online Details tab. See _patientsBody() note.
+  _onlineBody() {
+    const { list, total, pages } = this._page('online');
+    if (!total) return `<div class="text-center py-16 text-gray-400 text-sm">${(this.search.online || this.dateFrom.online || this.dateTo.online) ? 'No online details match.' : 'No online details yet.'}</div>`;
+    return `<div style="overflow-x:auto">
 <table class="tbl" style="min-width:780px">
   <thead><tr><th>ID</th><th>Date</th><th>Company</th><th>Bank</th><th>Amount</th><th>App</th><th>Payment Details</th><th>Edit</th><th>Delete</th></tr></thead>
   <tbody>
-${list.map(o => `
+${list.map((o, i) => `
   <tr class="cursor-pointer" onclick="APP.viewId='${o.id}';APP.render()">
-    <td class="c">${esc(o.id)}</td>
+    <td class="c">${this.page.online * PAGE_SIZE + i + 1}</td>
     <td class="c">${o.date ? esc(fmtDate(o.date)) : '<span class="text-gray-300">—</span>'}</td>
     <td><span class="font-bold text-gray-900">${esc(o.company || '—')}</span></td>
     <td class="c">${o.bank ? esc(o.bank) : '<span class="text-gray-300">—</span>'}</td>
@@ -2043,7 +2164,7 @@ ${list.map(o => `
   </tr>`).join('')}
   </tbody>
 </table>
-</div>${this._pager('online', total, pages)}`}`;
+</div>${this._pager('online', total, pages)}`;
   }
 
   /* ════ DASHBOARD ════ */
@@ -2177,7 +2298,7 @@ ${this._dashModalHtml()}`;
         title: 'Worker Details',
         cols: [['Staff Name', 'staffName'], ['Duty Date', r => fmtDate(r.dutyDate || '')],
         ['Staff Mobile', 'staffMobile'], ['Party Mobile', 'partyMobile'],
-        ['Party Address', 'partyAddress'], ['Status', r => (r.status || 'on') === 'off' ? 'Off Duty' : 'On Duty']]
+        ['Party Address', 'partyAddress'], ['Status', r => r.status === 'off' ? 'Off Duty' : (r.status === 'on' ? 'On Duty' : '')]]
       }
     };
     const cfg = CFG[key]; if (!cfg) return;
@@ -2236,22 +2357,29 @@ ${this._dashModalHtml()}`;
   </div>
 </div>`;
     }
-    const { list, total, pages } = this._page('patients');
+    const total0 = this._page('patients').total;
     return `
 <div class="flex flex-wrap items-center gap-3 mb-4">
   <button onclick="APP.formType='patient';APP.showForm=true;APP.editingId=null;APP.formData={};APP.render()" class="fbtn" style="background:#3b82f6;color:#fff">${ico('plus')} Add Patient</button>
   ${this._searchBar('patients', 'Search patients by name, ID, mobile…', '#3b82f6')}
-  <span class="text-xs text-gray-400 font-medium">${total} record${total !== 1 ? 's' : ''}</span>
+  <span class="text-xs text-gray-400 font-medium" id="cnt-patients">${total0} record${total0 !== 1 ? 's' : ''}</span>
 </div>
-${!total ? `<div class="text-center py-16 text-gray-400 text-sm">${this.search.patients ? 'No patients match.' : 'No patients yet.'}</div>` :
-        `<div style="overflow-x:auto">
+<div id="lblk-patients">${this._patientsBody()}</div>`;
+  }
+  // Results-only block for the Patients tab (record table / empty-state /
+  // pager). Kept separate from _rPatients() so search/date changes can patch
+  // just this piece — see _patchList().
+  _patientsBody() {
+    const { list, total, pages } = this._page('patients');
+    if (!total) return `<div class="text-center py-16 text-gray-400 text-sm">${this.search.patients ? 'No patients match.' : 'No patients yet.'}</div>`;
+    return `<div style="overflow-x:auto">
 <table class="tbl" style="min-width:640px">
   <thead><tr><th>ID</th><th>Name</th><th>Mobile No.</th><th>Address</th><th>Edit</th><th>Delete</th></tr></thead>
   <tbody>
-${list.map(p => `
+${list.map((p, i) => `
   <tr class="cursor-pointer" onclick="APP.viewId='${p.id}';APP.render()">
-    <td class="c">${esc(p.id)}</td>
-    <td><div class="flex items-center gap-2"><div class="w-7 h-7 rounded-full bg-blue-50 flex items-center justify-center flex-shrink-0 text-blue-500 overflow-hidden text-xs">${p.photo ? `<img src="${p.photo}" class="w-7 h-7 rounded-full object-cover">` : '👤'}</div><span class="font-bold text-gray-900">${esc(p.name)}</span></div></td>
+    <td class="c">${this.page.patients * PAGE_SIZE + i + 1}</td>
+    <td><span class="font-bold text-gray-900">${esc(p.name)}</span></td>
     <td class="c">📞 ${esc(p.mobile)}</td>
     <td>${p.address ? esc(p.address) : '<span class="text-gray-300">—</span>'}</td>
     <td class="c"><button onclick="event.stopPropagation();APP.editPatient('${p.id}')" class="fbtn text-xs" style="background:#fef3c7;color:#92400e;border:none;padding:5px 10px">${ico('edit', 'w-3.5 h-3.5')} Edit</button></td>
@@ -2259,7 +2387,7 @@ ${list.map(p => `
   </tr>`).join('')}
   </tbody>
 </table>
-</div>${this._pager('patients', total, pages)}`}`;
+</div>${this._pager('patients', total, pages)}`;
   }
 
   /* ════ STAFF RENDER ════ */
@@ -2273,11 +2401,7 @@ ${list.map(p => `
 <div class="bg-white rounded-2xl shadow-sm border border-gray-100 p-5 w-full max-w-lg mx-auto">
   <div class="flex items-start justify-between mb-4">
     <div class="flex items-center gap-3">
-      ${s.photo
-          ? `<img src="${s.photo}" class="w-14 h-14 rounded-full object-cover flex-shrink-0 border-2 border-green-200">`
-          : (s.photoLink
-            ? `<a href="${esc(String(s.photoLink).split(/\s*,\s*/)[0])}" target="_blank" rel="noopener" title="Open photo in Google Drive" class="w-14 h-14 rounded-full bg-green-50 flex items-center justify-center flex-shrink-0 text-2xl border-2 border-green-200" style="text-decoration:none">👤</a>`
-            : `<div class="w-14 h-14 rounded-full bg-green-50 flex items-center justify-center flex-shrink-0 text-2xl">👤</div>`)}
+      ${staffAvatar(s, 'w-14 h-14', 'text-2xl')}
       <div>
         <h2 class="font-black text-lg">${esc(s.name)}${s.nickname ? ` <span class="text-sm font-normal text-gray-400">"${esc(s.nickname)}"</span>` : ''}</h2>
         <div class="flex items-center gap-1.5 mt-1 flex-wrap">
@@ -2374,27 +2498,31 @@ ${list.map(p => `
   </div>
 </div>`;
     }
-    const { list, total, pages } = this._page('staff');
+    const total0 = this._page('staff').total;
     return `
 <div class="flex flex-wrap items-center gap-3 mb-4">
   <button onclick="APP.formType='staff';APP.showForm=true;APP.editingId=null;APP.formData={};APP.render()" class="fbtn" style="background:#10b981;color:#fff">${ico('plus')} Add Staff</button>
   ${this._searchBar('staff', 'Search staff by name, ID, mobile…', '#10b981')}
-  <span class="text-xs text-gray-400 font-medium">${total} record${total !== 1 ? 's' : ''}</span>
+  <span class="text-xs text-gray-400 font-medium" id="cnt-staff">${total0} record${total0 !== 1 ? 's' : ''}</span>
 </div>
-${!total ? `<div class="text-center py-16 text-gray-400 text-sm">${this.search.staff ? 'No staff match.' : 'No staff yet.'}</div>` :
-        `<div style="overflow-x:auto">
+<div id="lblk-staff">${this._staffBody()}</div>`;
+  }
+  // Results-only block for the Staff tab. See _patientsBody() note above —
+  // kept separate so a single keystroke in the search box can patch just
+  // this table instead of rebuilding the whole page (and the search input
+  // along with it).
+  _staffBody() {
+    const { list, total, pages } = this._page('staff');
+    if (!total) return `<div class="text-center py-16 text-gray-400 text-sm">${this.search.staff ? 'No staff match.' : 'No staff yet.'}</div>`;
+    return `<div style="overflow-x:auto">
 <table class="tbl" style="min-width:820px">
   <thead><tr><th>ID</th><th>Name</th><th>Mobile No.</th><th>Type</th><th>Rate/Day</th><th>Start Date</th><th>Docs</th><th>Edit</th><th>Delete</th></tr></thead>
   <tbody>
-${list.map(s => `
+${list.map((s, i) => `
   <tr class="cursor-pointer" onclick="APP.viewId='${s.id}';APP.render()">
-    <td class="c">${esc(s.id)}</td>
-    <td><div class="flex items-center gap-2">${s.photo
-            ? `<img src="${s.photo}" class="w-7 h-7 rounded-full object-cover flex-shrink-0 border border-green-200">`
-            : (s.photoLink
-              ? `<a href="${esc(String(s.photoLink).split(/\s*,\s*/)[0])}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="Open photo in Google Drive" class="w-7 h-7 rounded-full bg-green-50 flex items-center justify-center flex-shrink-0 text-xs border border-green-200 overflow-hidden" style="text-decoration:none">👤</a>`
-              : `<div class="w-7 h-7 rounded-full bg-green-50 flex items-center justify-center flex-shrink-0 text-green-600 text-xs">👤</div>`)
-          }<span class="font-bold text-gray-900">${esc(s.name)}</span>${s.nickname ? `<span class="text-xs font-normal text-gray-400">"${esc(s.nickname)}"</span>` : ''}</div></td>
+    <td class="c">${this.page.staff * PAGE_SIZE + i + 1}</td>
+    <td><div class="flex items-center gap-2">${staffAvatar(s, 'w-7 h-7')
+      }<span class="font-bold text-gray-900">${esc(s.name)}</span>${s.nickname ? `<span class="text-xs font-normal text-gray-400">"${esc(s.nickname)}"</span>` : ''}</div></td>
     <td class="c">📞 ${esc(s.mobile)}</td>
     <td class="c"><span class="text-xs font-bold px-1.5 py-0.5 rounded" style="background:#dcfce7;color:#15803d">${esc(s.type)}</span></td>
     <td class="c">${s.rate ? '₹' + Number(s.rate).toLocaleString('en-IN') : '<span class="text-gray-300">—</span>'}</td>
@@ -2405,7 +2533,7 @@ ${list.map(s => `
   </tr>`).join('')}
   </tbody>
 </table>
-</div>${this._pager('staff', total, pages)}`}`;
+</div>${this._pager('staff', total, pages)}`;
   }
 
   /* ════ BILLS RENDER ════ */
@@ -2566,15 +2694,21 @@ ${list.map(s => `
   </div>
 </div>`;
     }
-    const { list, total, pages } = this._page('bills');
     h += `<div class="flex flex-wrap items-center gap-3 mb-4">${this._searchBar('bills', 'Search bills by patient, bill no, date…', '#7c3aed')}</div>`;
-    if (!this.bills.length) return h + `<div class="text-center py-12 text-gray-400 text-sm">No bills yet. Click + New Bill to start.</div>`;
-    if (!total) return h + `<div class="text-center py-12 text-gray-400 text-sm">No bills match your search.</div>`;
-    h += `<div class="grid-auto">`;
+    return h + `<div id="lblk-bills">${this._billsBody()}</div>`;
+  }
+  // Results-only block for the Bills tab (card grid / empty-state / pager).
+  // See _patientsBody() note — kept separate so search patches just this
+  // piece instead of rebuilding the whole page and the search input with it.
+  _billsBody() {
+    const { list, total, pages } = this._page('bills');
+    if (!this.bills.length) return `<div class="text-center py-12 text-gray-400 text-sm">No bills yet. Click + New Bill to start.</div>`;
+    if (!total) return `<div class="text-center py-12 text-gray-400 text-sm">No bills match your search.</div>`;
+    let g = `<div class="grid-auto">`;
     list.forEach(b => {
       const bc = centerOf(b.center); const ac = bc.color; const amt = Number(b.totalAmount) || 0;
       const inBatch = this.printBatch.includes(b.id);
-      h += `<div class="card p-4 cursor-pointer" style="border-left:4px solid ${ac}" onclick="APP.viewBill('${b.id}')">
+      g += `<div class="card p-4 cursor-pointer" style="border-left:4px solid ${ac}" onclick="APP.viewBill('${b.id}')">
   <div class="flex justify-between items-start mb-2">
     <div class="min-w-0">
       <span class="text-xs font-bold px-2 py-0.5 rounded-full" style="background:${bc.bg};color:${ac}">${esc(bc.badge)}</span>
@@ -2594,7 +2728,7 @@ ${list.map(s => `
   </div>
 </div>`;
     });
-    return h + `</div>` + this._pager('bills', total, pages);
+    return g + `</div>` + this._pager('bills', total, pages);
   }
 
   _rSheets() {
@@ -2706,6 +2840,27 @@ ${list.map(s => `
 ══════════════════════════════════════════════════════════ */
 let APP;
 function initApp() { APP = window.APP = new App(); }
+
+// Press Enter anywhere in an add/edit form to trigger its primary action
+// (Save / Add) — no need to click the button. Textareas keep their normal
+// newline behaviour, and dialogs/search boxes handle Enter on their own, so
+// they're skipped here.
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter' || e.isComposing) return;
+  const t = e.target;
+  if (!t || !t.tagName) return;
+  const tag = t.tagName.toUpperCase();
+  if (tag === 'TEXTAREA' || tag === 'BUTTON') return;
+  if (tag !== 'INPUT' && tag !== 'SELECT') return;
+  // Let dialog overlays, the login screen and the search boxes manage Enter.
+  if (t.closest && (t.closest('#dlg-overlay') || t.closest('#login-screen'))) return;
+  // Skip the search box and the date-range filter bar — those aren't forms.
+  if (t.closest && (t.closest('.search-wrap') || t.closest('.date-range'))) return;
+  if (!window.APP || !APP.showForm) return;
+  e.preventDefault();
+  APP.submitForm();
+});
+
 // Pull other devices' new records down promptly — not only on a full page
 // reload. autoPull skips while a form is open so it can't disrupt data entry,
 // and pullFromServer is a no-op when nothing changed.

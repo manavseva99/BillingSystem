@@ -1931,6 +1931,11 @@ body::before {
     box-shadow: 0 0 0 3px rgba(220, 38, 38, .18)
 }
 
+.duty-dot.none {
+    background: #cbd5e1;
+    box-shadow: 0 0 0 3px rgba(148, 163, 184, .18)
+}
+
 .duty-badge {
     display: inline-flex;
     align-items: center;
@@ -1958,6 +1963,12 @@ body::before {
     background: #fee2e2;
     color: #b91c1c;
     border-color: #fecaca
+}
+
+.duty-badge.duty-none {
+    background: #f1f5f9;
+    color: #64748b;
+    border-color: #e2e8f0
 }
 
 .duty-toggle {
@@ -2024,7 +2035,8 @@ body::before {
 @media print {
     .print-list {
         font-family: Arial, sans-serif;
-        color: #000
+        color: #000;
+        width: 100%;
     }
 
     .print-list h2 {
@@ -2041,23 +2053,74 @@ body::before {
     }
 
     .print-list table {
-        width: 100%;
+        /* Slightly less than 100% (not the full 100%) so the outer right
+           border always has a hair of clearance from the page's printable
+           edge. At an exact 100% width, browser/printer sub-pixel rounding
+           on wide tables (many columns) can push the last column's border
+           a fraction past the edge, which prints as a missing right
+           border — this buffer prevents that on every tab. */
+        width: calc(100% - 2px);
+        margin: 0 auto;
         border-collapse: collapse;
-        font-size: 10.5px
+        table-layout: fixed;
+        /* even column widths that always fit the page */
+        font-size: 10px;
+        border: 1.4px solid #000;
+        /* solid outer frame */
+    }
+
+    /* Portrait A4 has ~190mm of usable width — plenty for a few columns,
+       tighter for tables with lots of them (Staff/Worker/Online run 7-9
+       columns). These two tiers shrink font size and cell padding a notch
+       so every column stays readable instead of getting cramped against
+       the page edge. Applied automatically by doPrintList() based on how
+       many columns the tab has. */
+    .print-list.pl-compact-1 table {
+        font-size: 9px;
+    }
+
+    .print-list.pl-compact-1 th,
+    .print-list.pl-compact-1 td {
+        padding: 4px 4px;
+    }
+
+    .print-list.pl-compact-2 table {
+        font-size: 8px;
+    }
+
+    .print-list.pl-compact-2 th,
+    .print-list.pl-compact-2 td {
+        padding: 3px 3px;
+    }
+
+    /* repeat the header row on every printed page */
+    .print-list thead {
+        display: table-header-group
     }
 
     .print-list th,
     .print-list td {
-        border: 1px solid #000;
-        padding: 6px 7px;
+        border: 0.9px solid #000;
+        padding: 5px 6px;
         text-align: left;
         vertical-align: top;
         word-break: break-word;
+        overflow-wrap: anywhere;
+        /* long values (emails, addresses) wrap instead of overflowing */
+        white-space: normal;
     }
 
     .print-list th {
-        background: #eee;
+        background: #e5e5e5;
         font-weight: 800;
+        border-color: #000;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact
+    }
+
+    /* subtle zebra striping so wide rows stay readable */
+    .print-list tbody tr:nth-child(even) td {
+        background: #f4f4f4;
         -webkit-print-color-adjust: exact;
         print-color-adjust: exact
     }
@@ -2069,8 +2132,9 @@ body::before {
 
     .print-list .pl-no {
         text-align: center;
-        color: #555;
-        width: 30px
+        color: #333;
+        width: 6%;
+        font-weight: 700
     }
 }
 

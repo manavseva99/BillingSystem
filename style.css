@@ -1208,9 +1208,42 @@ select:focus-visible {
         border-bottom: 1px solid #000;
     }
 
+    .b-watermark-wrap {
+        position: relative;
+    }
+
+    /* Centre logo watermark — spans from Patient Name down to just
+       before the Total (In Words) row, i.e. it sits behind b-pinfo
+       and b-tbl only (its parent, .b-watermark-wrap, wraps exactly
+       those two and nothing else). Wide + faint so the printed text
+       and table lines stay perfectly legible on top of it. */
+    .b-watermark {
+        position: absolute;
+        top: 0;
+        right: 0;
+        bottom: 0;
+        left: 0;
+        background-repeat: no-repeat;
+        background-position: center;
+        background-size: auto 92%;
+        opacity: .15;
+        z-index: 0;
+        pointer-events: none;
+    }
+
+    .b-pinfo {
+        position: relative;
+        z-index: 1;
+    }
+
     .b-pinfo p {
         margin: 3px 0;
         font-size: 14px
+    }
+
+    .b-tbl {
+        position: relative;
+        z-index: 1;
     }
 
     .b-tbl {

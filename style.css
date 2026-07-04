@@ -1236,6 +1236,14 @@ select:focus-visible {
         opacity: .20;
         z-index: 0;
         pointer-events: none;
+        /* Without this, Chrome/Edge/Safari silently drop background-images
+           on print unless the user has manually ticked "Background
+           graphics" in the print dialog — which is why the watermark
+           logo showed up locally (that setting was already on) but
+           disappeared after deploying and printing from a fresh browser/
+           profile that defaults it off. Forces the image to always print. */
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
     }
 
     .b-pinfo {

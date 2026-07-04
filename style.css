@@ -1133,19 +1133,6 @@ select:focus-visible {
         display: none !important
     }
 
-    /* These are fixed, full-viewport or high z-index overlays. If any of
-       them is still visible (even mid fade-out) when window.print() fires —
-       the copies dialog, a toast, the offline banner, or the login screen —
-       it renders on top of everything else and the printed/saved PDF comes
-       out blank or dark. Force them off unconditionally during print so
-       there's no race with their JS-driven show/hide timers. */
-    #dlg-overlay,
-    #toast-wrap,
-    #offline-banner,
-    #login-screen {
-        display: none !important
-    }
-
     #print-sheet {
         display: block !important
     }
@@ -1210,9 +1197,15 @@ select:focus-visible {
     .b-meta {
         display: flex;
         justify-content: space-between;
-        font-weight: 500;
+        font-weight: 700;
         font-size: 14px;
         margin: 6px 0 4px
+    }
+
+    .b-billno-blank {
+        /* display: inline-block; */
+        min-width: 70px;
+        border-bottom: 1px solid #000;
     }
 
     .b-pinfo p {
@@ -2053,10 +2046,6 @@ body::before {
         font-size: 10.5px
     }
 
-    .print-list thead {
-        display: table-header-group
-    }
-
     .print-list th,
     .print-list td {
         border: 1px solid #000;
@@ -2082,5 +2071,39 @@ body::before {
         text-align: center;
         color: #555;
         width: 30px
+    }
+}
+
+
+/* ══════════════ PRINT: hide decorative layers so content is never covered ══════════════
+   The animated aurora (body::before) is position:fixed and was painting over
+   the print sheet — causing a blank page on mobile and needing a click on
+   desktop. Hide every decorative / overlay layer during print and lift the
+   print sheet to the very top. */
+@media print {
+
+    html,
+    body {
+        background: #fff !important;
+    }
+
+    body::before,
+    body::after {
+        display: none !important;
+        content: none !important;
+        background: none !important;
+    }
+
+    #login-screen,
+    #dlg-overlay,
+    #toast-wrap,
+    #offline-banner {
+        display: none !important;
+    }
+
+    #print-sheet {
+        position: relative !important;
+        z-index: 2147483647 !important;
+        background: #fff !important;
     }
 }

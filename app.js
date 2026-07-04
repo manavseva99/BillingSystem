@@ -747,12 +747,11 @@ function buildBillHTML(bill) {
     <p class="addr">${addr}</p>
   </div>
   <div class="b-meta"> 
-      <div class="b-pinfo">
-         <span>Patient Name: <b>${esc(bill.patientName)}</b></span>
-      </div>
+      <span>Bill No :- <span class="b-billno-blank"></span></span>
     <span>Date: <b>${todayStr()}</b></span>
   </div>
   <div class="b-pinfo">
+    <p><b>Patient Name:</b> ${esc(bill.patientName)}</p>
     <p><b>WB / AB / Nurse:</b> ${esc(bill.staffName)} (${esc(bill.staffType)})</p>
   </div>
   <table class="b-tbl">
@@ -777,6 +776,33 @@ function buildBillHTML(bill) {
   </div>
 </div>`;
 }
+// Waits until the browser has actually laid out & painted whatever was just
+// written into #print-sheet before we call window.print().
+//
+// Why this exists: the old code (double rAF + a flat 60ms setTimeout) left a
+// window where the browser hadn't committed a layout/paint pass for the
+// freshly-injected content yet. On desktop that showed up as a blank print
+// preview that only "woke up" after clicking something else on the page
+// (because the click forced a reflow/repaint the browser had been deferring).
+// On mobile "Save as PDF" — which has no such correcting user interaction
+// available — that deferred paint never happened before the PDF snapshot was
+// taken, so the saved file came out blank.
+//
+// Fix: force a *synchronous* reflow ourselves (reading offsetHeight makes the
+// browser compute layout immediately, it can't defer it), wait for web fonts
+// to finish loading (a print pass started mid-font-swap can also render
+// blank/empty text on some mobile browsers), then still do the double-rAF +
+// a longer delay as a safety margin for slower mobile devices.
+async function waitForPrintReady(el) {
+  void el.offsetHeight; // force synchronous layout
+  if (document.fonts && document.fonts.ready) {
+    try { await document.fonts.ready; } catch (err) { /* ignore */ }
+  }
+  await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  await new Promise(resolve => setTimeout(resolve, 250));
+  void el.offsetHeight; // reflow again right before printing
+}
+
 async function doPrint(bills) {
   // Ask the user how many copies of THIS page (all bills passed in) to print
   const n = await askCopies();
@@ -808,8 +834,7 @@ async function doPrint(bills) {
   // harmless and guarantees it's present while the PDF is generated.
   // Double requestAnimationFrame waits for a full paint before printing so
   // the freshly-injected content is laid out first.
-  await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-  await new Promise(resolve => setTimeout(resolve, 60));
+  await waitForPrintReady(sheet);
   try {
     window.print();
   } catch (err) {
@@ -858,8 +883,7 @@ async function doPrintList(title, columns, rows, metaText) {
   // Wait for a full paint before printing (same as the bill printer). Do NOT
   // clear the content on afterprint — that blanks the page on mobile. We only
   // remove the injected landscape rule afterwards so bills print portrait again.
-  await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-  await new Promise(resolve => setTimeout(resolve, 60));
+  await waitForPrintReady(ps);
   try {
     window.print();
   } catch (err) {
@@ -1696,11 +1720,15 @@ class App {
     if (!days || days < 1) { toast('Days must be ≥1', 'error'); return }
     if (!rate || rate <= 0) { toast('Enter a valid rate', 'error'); return }
     if (this.billLines.length >= 9) { toast('Maximum 9 line items per bill', 'error'); return }
-    this.billLines.push({ no: fd.bstaff || (this.billLines.length + 1), duty: fd.bduty || 'Home', startDate: fd.bstartDate, endDate: fd.bendDate, days, shift: fd.bshift || 'Day', rate, amount: days * rate });
+    // S.No must always be this line's own position in the bill (1,2,3…).
+    // It used to fall back to `fd.bstaff` (the selected staff member's ID)
+    // whenever that ID was truthy — which is always — so lines showed the
+    // staff's ID instead of a proper running number (e.g. "5,3,2,1,4").
+    this.billLines.push({ no: this.billLines.length + 1, duty: fd.bduty || 'Home', startDate: fd.bstartDate, endDate: fd.bendDate, days, shift: fd.bshift || 'Day', rate, amount: days * rate });
     Object.assign(fd, { bduty: 'Home', bstartDate: '', bendDate: '', bdays: '', bshift: 'Day', brate: '' });
     this.render();
   }
-  removeLine(i) { this.billLines.splice(i, 1); this.render() }
+  removeLine(i) { this.billLines.splice(i, 1); this.billLines.forEach((l, idx) => l.no = idx + 1); this.render() }
   async saveBillOnly() { const b = await this._billHTML(); if (!b) return; toast(`Bill ${b.billNo} saved — ₹${Number(b.totalAmount).toLocaleString('en-IN')}`, 'success', 4000); this.billLines = []; this.formData = {}; this.showForm = false; this.render() }
   async saveBillAndPrint() { const b = await this._billHTML(); if (!b) return; toast(`Bill ${b.billNo} generated`, 'success', 4000); this.billLines = []; this.formData = {}; this.showForm = false; this.render(); setTimeout(() => doPrint([b]), 350) }
   async _billHTML() {
